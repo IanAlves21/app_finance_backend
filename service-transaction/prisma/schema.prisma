@@ -1,0 +1,99 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// --------------------------------------------------
+// ENUMS (Opções fixas)
+// --------------------------------------------------
+enum TransactionType {
+  INCOME  // Receita (Verde)
+  EXPENSE // Despesa (Vermelho)
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+}
+
+// --------------------------------------------------
+// TABELAS
+// --------------------------------------------------
+
+// Grupo que une você e sua esposa ("Lucas & Mariana")
+model FamilyGroup {
+  id           String        @id @default(uuid())
+  name         String
+  createdAt    DateTime      @default(now())
+  
+  // Relacionamentos: Um grupo tem vários usuários, carteiras e transações
+  users        User[]
+  wallets      Wallet[]
+  transactions Transaction[]
+}
+
+// Os Usuários (Você, Mariana)
+model User {
+  id           String        @id @default(uuid())
+  name         String        // ex: "John Doe" / "Lucas"
+  email        String        @unique
+  avatarUrl    String?
+  
+  familyId     String
+  family       FamilyGroup   @relation(fields: [familyId], references: [id])
+
+  transactions Transaction[] // Transações pagas por este usuário
+}
+
+// As Fontes de Renda / Contas (ex: "Shared Wallet Account", "Nubank", "Vale Alimentação")
+model Wallet {
+  id           String        @id @default(uuid())
+  name         String
+  balance      Decimal       @default(0.00) // Saldo atual desta carteira específica
+  
+  familyId     String
+  family       FamilyGroup   @relation(fields: [familyId], references: [id])
+
+  transactions Transaction[]
+}
+
+// As Categorias (ex: "Food", "Shopping", "Income")
+model Category {
+  id           String        @id @default(uuid())
+  name         String
+  icon         String?       // Nome do ícone no Flutter
+  type         TransactionType 
+  
+  transactions Transaction[]
+}
+
+// O Coração do App: As Transações
+model Transaction {
+  id           String            @id @default(uuid())
+  description  String            // ex: "Freelance Payment", "Target Store"
+  note         String?           // ex: "Payment for design system deliverables"
+  amount       Decimal           // Valor (ex: 4500.00)
+  date         DateTime          // Data (ex: Jul 5, 2026)
+  
+  type         TransactionType
+  status       TransactionStatus @default(COMPLETED)
+
+  // Relacionamentos (Chaves Estrangeiras)
+  categoryId   String
+  category     Category          @relation(fields: [categoryId], references: [id])
+
+  walletId     String
+  wallet       Wallet            @relation(fields: [walletId], references: [id])
+
+  paidById     String
+  paidBy       User              @relation(fields: [paidById], references: [id])
+
+  familyId     String
+  family       FamilyGroup       @relation(fields: [familyId], references: [id])
+
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+}
