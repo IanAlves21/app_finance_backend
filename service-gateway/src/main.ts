@@ -114,13 +114,17 @@ async function bootstrap(): Promise<void> {
                             'x-user-email',
                             authReq.user.email || '',
                         );
+                        proxyReq.setHeader(
+                            'x-user-name',
+                            encodeURIComponent(authReq.user.name || ''),
+                        );
                     }
                 },
             },
         }),
     );
 
-    await app.listen(8080);
+    await app.listen(8080, '0.0.0.0');
     console.log(`🚀 API Gateway rodando na porta 8080...`);
 }
 
