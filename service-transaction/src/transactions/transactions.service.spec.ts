@@ -184,4 +184,25 @@ describe('TransactionsService', () => {
             expect(result).toBeDefined();
         });
     });
+
+    describe('update', () => {
+        it('should update a transaction and format date if provided', async () => {
+            const updateDto = {
+                description: 'Updated Description',
+                date: '2026-07-16',
+            };
+            mockPrismaService.transaction.update = jest.fn().mockResolvedValue({ id: 'tx-123', ...updateDto });
+
+            const result = await service.update('tx-123', updateDto);
+
+            expect(mockPrismaService.transaction.update).toHaveBeenCalledWith({
+                where: { id: 'tx-123' },
+                data: {
+                    description: 'Updated Description',
+                    date: new Date('2026-07-16'),
+                },
+            });
+            expect(result).toBeDefined();
+        });
+    });
 });

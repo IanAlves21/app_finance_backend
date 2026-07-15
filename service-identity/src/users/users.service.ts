@@ -1,12 +1,13 @@
 import { ConflictException, Injectable } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
+import { RegisterDto } from '../auth/dto/register.dto';
 
 @Injectable()
 export class UsersService {
     constructor(private prisma: PrismaService) {}
 
-    async create(data: any) {
+    async create(data: RegisterDto) {
         // 1. Verifica se o e-mail já existe
         const userExists = await this.prisma.user.findUnique({
             where: { email: data.email },
@@ -28,9 +29,14 @@ export class UsersService {
             },
         });
 
-        // Removemos a senha do objeto antes de devolver como resposta HTTP
-        const { password, ...result } = newUser;
-        return result;
+        // Retorna explicitamente os dados sem expor o hash da senha
+        return {
+            id: newUser.id,
+            name: newUser.name,
+            email: newUser.email,
+            createdAt: newUser.createdAt,
+            updatedAt: newUser.updatedAt,
+        };
     }
 
     async findByEmail(email: string) {

@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
 import { PrismaModule } from './prisma/prisma.module';
 import { TransactionsModule } from './transactions/transactions.module';
+import { GatewayGuard } from './common/guards/gateway.guard';
 
 @Module({
     imports: [
@@ -11,6 +13,11 @@ import { TransactionsModule } from './transactions/transactions.module';
         TransactionsModule,
     ],
     controllers: [],
-    providers: [],
+    providers: [
+        {
+            provide: APP_GUARD,
+            useClass: GatewayGuard,
+        },
+    ],
 })
 export class AppModule {}

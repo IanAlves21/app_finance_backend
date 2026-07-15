@@ -16,8 +16,17 @@ describe('AppController (e2e)', () => {
         await app.init();
     });
 
-    it('/ (GET)', () => {
-        return request(app.getHttpServer()).get('/').expect(200).expect('Hello World!');
+    it('/transactions (GET) - Recusa acesso direto sem assinatura (403)', () => {
+        return request(app.getHttpServer())
+            .get('/transactions')
+            .expect(403);
+    });
+
+    it('/transactions (GET) - Permite acesso com assinatura do Gateway (200)', () => {
+        return request(app.getHttpServer())
+            .get('/transactions')
+            .set('x-gateway-signature', 'super-segredo-de-comunicacao-interna-123')
+            .expect(200);
     });
 
     afterEach(async () => {

@@ -106,6 +106,12 @@ async function bootstrap(): Promise<void> {
             logger: console,
             on: {
                 proxyReq: (proxyReq, req: any) => {
+                    // Adiciona a assinatura de segurança secreta do Gateway para comunicação interna confiável
+                    proxyReq.setHeader(
+                        'x-gateway-signature',
+                        process.env.API_GATEWAY_SECRET || '',
+                    );
+
                     // Opcional: Adiciona cabeçalhos com dados do usuário autenticado para os microserviços consumirem
                     const authReq = req as AuthenticatedRequest;
                     if (authReq.user) {

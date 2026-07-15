@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
+import { UpdateTransactionDto } from './dto/update-transaction.dto';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class TransactionsService {
@@ -154,8 +156,16 @@ export class TransactionsService {
         });
     }
 
-    update(id: string) {
-        return `This action updates a #${id} transaction`; // Deixaremos para implementar depois
+    async update(id: string, updateTransactionDto: UpdateTransactionDto) {
+        const dataToUpdate: Prisma.TransactionUpdateInput = { ...updateTransactionDto };
+        if (updateTransactionDto.date) {
+            dataToUpdate.date = new Date(updateTransactionDto.date);
+        }
+
+        return this.prisma.transaction.update({
+            where: { id },
+            data: dataToUpdate,
+        });
     }
 
     async remove(id: string) {
