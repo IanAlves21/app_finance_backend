@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { UpdateTransactionDto } from './dto/update-transaction.dto';
@@ -170,5 +170,127 @@ export class TransactionsService {
 
     async remove(id: string) {
         return this.prisma.transaction.delete({ where: { id } });
+    }
+
+    async findAllCategories(userId?: string, userEmail?: string, userName?: string) {
+        let finalFamilyId: string | undefined = undefined;
+
+        if (userId && userEmail) {
+            const dbUser = await this.getOrCreateUser(userId, userEmail, userName);
+            finalFamilyId = dbUser.familyId;
+        }
+
+        return this.prisma.category.findMany({
+            where: {
+                OR: [
+                    { familyId: null },
+                    ...(finalFamilyId ? [{ familyId: finalFamilyId }] : []),
+                ],
+            },
+            orderBy: {
+                name: 'asc',
+            },
+        });
+    }
+
+    async createCategory(
+        data: { name: string; type: 'INCOME' | 'EXPENSE'; icon?: string; color?: string },
+        userId?: string,
+        userEmail?: string,
+        userName?: string,
+    ) {
+        let finalFamilyId: string | null = null;
+
+        if (userId && userEmail) {
+            const dbUser = await this.getOrCreateUser(userId, userEmail, userName);
+            finalFamilyId = dbUser.familyId;
+        }
+
+        return this.prisma.category.create({
+            data: {
+                name: data.name,
+                type: data.type,
+                icon: data.icon || 'category',
+                color: data.color || '#1A2D5A',
+                familyId: finalFamilyId,
+            },
+        });
+    }
+
+    async updateCategory(
+        id: string,
+        data: { name?: string; type?: 'INCOME' | 'EXPENSE'; icon?: string; color?: string },
+        userId?: string,
+        userEmail?: string,
+        userName?: string,
+    ) {
+        if (!userId || !userEmail) {
+            throw new UnauthorizedException('User credentials are required');
+        }
+
+        const dbUser = await this.getOrCreateUser(userId, userEmail, userName);
+        
+        const category = await this.prisma.category.findUnique({
+            where: { id },
+        });
+
+        if (!category) {
+            throw new NotFoundException('Category not found');
+        }
+
+        if (!category.familyId) {
+            throw new ForbiddenException('System default categories cannot be modified');
+        }
+
+        if (category.familyId !== dbUser.familyId) {
+            throw new ForbiddenException('You do not have permission to modify this category');
+        }
+
+        return this.prisma.category.update({
+            where: { id },
+            data: {
+                name: data.name,
+                type: data.type,
+                icon: data.icon,
+                color: data.color,
+            },
+        });
+    }
+
+    async deleteCategory(id: string, userId?: string, userEmail?: string, userName?: string) {
+        if (!userId || !userEmail) {
+            throw new UnauthorizedException('User credentials are required');
+        }
+
+        const dbUser = await this.getOrCreateUser(userId, userEmail, userName);
+
+        const category = await this.prisma.category.findUnique({
+            where: { id },
+        });
+
+        if (!category) {
+            throw new NotFoundException('Category not found');
+        }
+
+        if (!category.familyId) {
+            throw new ForbiddenException('System default categories cannot be deleted');
+        }
+
+        if (category.familyId !== dbUser.familyId) {
+            throw new ForbiddenException('You do not have permission to delete this category');
+        }
+
+        // Check associated transactions
+        const associatedTransactions = await this.prisma.transaction.count({
+            where: { categoryId: id },
+        });
+
+        if (associatedTransactions > 0) {
+            throw new BadRequestException('Não é possível excluir esta categoria pois ela já possui transações associadas.');
+        }
+
+        return this.prisma.category.delete({
+            where: { id },
+        });
     }
 }

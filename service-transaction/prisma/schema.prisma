@@ -33,6 +33,7 @@ model FamilyGroup {
   users        User[]
   wallets      Wallet[]
   transactions Transaction[]
+  categories   Category[]
 }
 
 // Os Usuários (Você, Mariana)
@@ -66,7 +67,11 @@ model Category {
   name         String
   icon         String?       // Nome do ícone no Flutter
   type         TransactionType 
+  color        String        @default("#1A2D5A") // Cor em formato hex
   
+  familyId     String?
+  family       FamilyGroup?  @relation(fields: [familyId], references: [id])
+
   transactions Transaction[]
 }
 

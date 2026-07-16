@@ -24,6 +24,43 @@ export class TransactionsController {
         const limitNumber = limit ? parseInt(limit, 10) : undefined;
         return this.transactionsService.findAll(userId, userEmail, userName, pageNumber, limitNumber);
     }
+
+    @Get('categories')
+    findAllCategories(@Headers() headers: Record<string, string>) {
+        const userId = headers['x-user-id'];
+        const userEmail = headers['x-user-email'];
+        const userName = headers['x-user-name'];
+        return this.transactionsService.findAllCategories(userId, userEmail, userName);
+    }
+
+    @Post('categories')
+    createCategory(@Body() body: { name: string; type: 'INCOME' | 'EXPENSE'; icon?: string; color?: string }, @Headers() headers: Record<string, string>) {
+        const userId = headers['x-user-id'];
+        const userEmail = headers['x-user-email'];
+        const userName = headers['x-user-name'];
+        return this.transactionsService.createCategory(body, userId, userEmail, userName);
+    }
+
+    @Patch('categories/:id')
+    updateCategory(
+        @Param('id') id: string,
+        @Body() body: { name?: string; type?: 'INCOME' | 'EXPENSE'; icon?: string; color?: string },
+        @Headers() headers: Record<string, string>,
+    ) {
+        const userId = headers['x-user-id'];
+        const userEmail = headers['x-user-email'];
+        const userName = headers['x-user-name'];
+        return this.transactionsService.updateCategory(id, body, userId, userEmail, userName);
+    }
+
+    @Delete('categories/:id')
+    deleteCategory(@Param('id') id: string, @Headers() headers: Record<string, string>) {
+        const userId = headers['x-user-id'];
+        const userEmail = headers['x-user-email'];
+        const userName = headers['x-user-name'];
+        return this.transactionsService.deleteCategory(id, userId, userEmail, userName);
+    }
+
     @Get(':id')
     findOne(@Param('id') id: string) {
         // Removemos o "+" porque nosso ID é uma String (UUID)
