@@ -205,4 +205,56 @@ describe('TransactionsService', () => {
             expect(result).toBeDefined();
         });
     });
+
+    describe('remove', () => {
+        it('should delete the transaction if no user credentials are provided (local development fallback)', async () => {
+            const mockTx = { id: 'tx-123', paidById: 'user-123' };
+            mockPrismaService.transaction.findUnique.mockResolvedValue(mockTx);
+            mockPrismaService.transaction.delete.mockResolvedValue(mockTx);
+
+            const result = await service.remove('tx-123');
+
+            expect(mockPrismaService.transaction.findUnique).toHaveBeenCalledWith({ where: { id: 'tx-123' } });
+            expect(mockPrismaService.transaction.delete).toHaveBeenCalledWith({ where: { id: 'tx-123' } });
+            expect(result).toEqual(mockTx);
+        });
+
+        it('should throw NotFoundException if transaction does not exist', async () => {
+            mockPrismaService.transaction.findUnique.mockResolvedValue(null);
+
+            await expect(service.remove('tx-nonexistent')).rejects.toThrow('Transação não encontrada');
+        });
+
+        it('should delete the transaction if user is the owner', async () => {
+            const userId = 'user-123';
+            const userEmail = 'user@test.com';
+            const userName = 'User One';
+            const mockUser = { id: userId, email: userEmail, name: userName, familyId: 'fam-123' };
+            const mockTx = { id: 'tx-123', paidById: userId };
+
+            mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+            mockPrismaService.transaction.findUnique.mockResolvedValue(mockTx);
+            mockPrismaService.transaction.delete.mockResolvedValue(mockTx);
+
+            const result = await service.remove('tx-123', userId, userEmail, userName);
+
+            expect(result).toEqual(mockTx);
+            expect(mockPrismaService.transaction.delete).toHaveBeenCalledWith({ where: { id: 'tx-123' } });
+        });
+
+        it('should throw ForbiddenException if user is NOT the owner', async () => {
+            const userId = 'user-123';
+            const userEmail = 'user@test.com';
+            const userName = 'User One';
+            const mockUser = { id: userId, email: userEmail, name: userName, familyId: 'fam-123' };
+            const mockTx = { id: 'tx-123', paidById: 'user-other' };
+
+            mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+            mockPrismaService.transaction.findUnique.mockResolvedValue(mockTx);
+
+            await expect(service.remove('tx-123', userId, userEmail, userName)).rejects.toThrow(
+                'Você não tem permissão para excluir esta transação.',
+            );
+        });
+    });
 });

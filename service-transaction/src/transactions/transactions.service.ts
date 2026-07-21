@@ -1,4 +1,10 @@
-import { Injectable, UnauthorizedException, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import {
+    Injectable,
+    UnauthorizedException,
+    NotFoundException,
+    ForbiddenException,
+    BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { UpdateTransactionDto } from './dto/update-transaction.dto';
@@ -168,7 +174,23 @@ export class TransactionsService {
         });
     }
 
-    async remove(id: string) {
+    async remove(id: string, userId?: string, userEmail?: string, userName?: string) {
+        const transaction = await this.prisma.transaction.findUnique({
+            where: { id },
+        });
+
+        if (!transaction) {
+            throw new NotFoundException('Transação não encontrada');
+        }
+
+        if (userId && userEmail) {
+            const dbUser = await this.getOrCreateUser(userId, userEmail, userName);
+            // Verifica se o usuário é o dono da transação
+            if (transaction.paidById !== dbUser.id) {
+                throw new ForbiddenException('Você não tem permissão para excluir esta transação.');
+            }
+        }
+
         return this.prisma.transaction.delete({ where: { id } });
     }
 
@@ -182,10 +204,7 @@ export class TransactionsService {
 
         return this.prisma.category.findMany({
             where: {
-                OR: [
-                    { familyId: null },
-                    ...(finalFamilyId ? [{ familyId: finalFamilyId }] : []),
-                ],
+                OR: [{ familyId: null }, ...(finalFamilyId ? [{ familyId: finalFamilyId }] : [])],
             },
             orderBy: {
                 name: 'asc',
@@ -229,7 +248,7 @@ export class TransactionsService {
         }
 
         const dbUser = await this.getOrCreateUser(userId, userEmail, userName);
-        
+
         const category = await this.prisma.category.findUnique({
             where: { id },
         });
@@ -286,7 +305,9 @@ export class TransactionsService {
         });
 
         if (associatedTransactions > 0) {
-            throw new BadRequestException('Não é possível excluir esta categoria pois ela já possui transações associadas.');
+            throw new BadRequestException(
+                'Não é possível excluir esta categoria pois ela já possui transações associadas.',
+            );
         }
 
         return this.prisma.category.delete({

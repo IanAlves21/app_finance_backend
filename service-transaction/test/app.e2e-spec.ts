@@ -17,9 +17,7 @@ describe('AppController (e2e)', () => {
     });
 
     it('/transactions (GET) - Recusa acesso direto sem assinatura (403)', () => {
-        return request(app.getHttpServer())
-            .get('/transactions')
-            .expect(403);
+        return request(app.getHttpServer()).get('/transactions').expect(403);
     });
 
     it('/transactions (GET) - Permite acesso com assinatura do Gateway (200)', () => {

@@ -34,7 +34,10 @@ export class TransactionsController {
     }
 
     @Post('categories')
-    createCategory(@Body() body: { name: string; type: 'INCOME' | 'EXPENSE'; icon?: string; color?: string }, @Headers() headers: Record<string, string>) {
+    createCategory(
+        @Body() body: { name: string; type: 'INCOME' | 'EXPENSE'; icon?: string; color?: string },
+        @Headers() headers: Record<string, string>,
+    ) {
         const userId = headers['x-user-id'];
         const userEmail = headers['x-user-email'];
         const userName = headers['x-user-name'];
@@ -73,7 +76,10 @@ export class TransactionsController {
     }
 
     @Delete(':id')
-    remove(@Param('id') id: string) {
-        return this.transactionsService.remove(id);
+    remove(@Param('id') id: string, @Headers() headers: Record<string, string>) {
+        const userId = headers['x-user-id'];
+        const userEmail = headers['x-user-email'];
+        const userName = headers['x-user-name'];
+        return this.transactionsService.remove(id, userId, userEmail, userName);
     }
 }
