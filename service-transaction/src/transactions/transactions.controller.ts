@@ -39,6 +39,18 @@ export class TransactionsController {
         );
     }
 
+    @Get('summary')
+    getSummary(
+        @Headers() headers: Record<string, string>,
+        @Query('startDate') startDate?: string,
+        @Query('endDate') endDate?: string,
+    ) {
+        const userId = headers['x-user-id'];
+        const userEmail = headers['x-user-email'];
+        const userName = headers['x-user-name'];
+        return this.transactionsService.getSummary(userId, userEmail, userName, startDate, endDate);
+    }
+
     @Get('categories')
     findAllCategories(@Headers() headers: Record<string, string>) {
         const userId = headers['x-user-id'];

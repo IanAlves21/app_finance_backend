@@ -182,6 +182,44 @@ describe('TransactionsService', () => {
         });
     });
 
+    describe('getSummary', () => {
+        it('should return aggregated income, expenses and balance correctly', async () => {
+            const userId = 'user-123';
+            const userEmail = 'user@test.com';
+            const userName = 'User One';
+            const mockUser = { id: userId, email: userEmail, name: userName, familyId: 'fam-123' };
+            const mockTransactions = [
+                { amount: 5000, type: 'INCOME' },
+                { amount: -1500, type: 'EXPENSE' },
+                { amount: -250, type: 'EXPENSE' },
+            ];
+
+            mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+            mockPrismaService.transaction.findMany.mockResolvedValue(mockTransactions);
+
+            const result = await service.getSummary(userId, userEmail, userName, '2026-07-01', '2026-07-31');
+
+            expect(mockPrismaService.transaction.findMany).toHaveBeenCalledWith({
+                where: {
+                    paidById: userId,
+                    date: {
+                        gte: new Date('2026-07-01'),
+                        lte: new Date('2026-07-31'),
+                    },
+                },
+                select: {
+                    amount: true,
+                    type: true,
+                },
+            });
+            expect(result).toEqual({
+                income: 5000,
+                expenses: 1750,
+                balance: 3250,
+            });
+        });
+    });
+
     describe('create', () => {
         it('should create transaction with user-specific IDs and dynamically resolved wallet/category', async () => {
             const userId = 'user-123';

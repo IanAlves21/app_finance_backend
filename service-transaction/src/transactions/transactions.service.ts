@@ -161,6 +161,56 @@ export class TransactionsService {
         });
     }
 
+    async getSummary(userId?: string, userEmail?: string, userName?: string, startDate?: string, endDate?: string) {
+        const dateFilter: Record<string, any> = {};
+        if (startDate) {
+            dateFilter.gte = new Date(startDate);
+        }
+        if (endDate) {
+            dateFilter.lte = new Date(endDate);
+        }
+
+        const whereClause: Record<string, any> = {};
+        if (userId && userEmail) {
+            await this.getOrCreateUser(userId, userEmail, userName);
+            whereClause.paidById = userId;
+        }
+        if (startDate || endDate) {
+            whereClause.date = dateFilter;
+        }
+
+        const transactions = await this.prisma.transaction.findMany({
+            where: whereClause,
+            select: {
+                amount: true,
+                type: true,
+            },
+        });
+
+        console.log(transactions);
+
+        let income = 0;
+        let expenses = 0;
+        for (const tx of transactions) {
+            // Convert Prisma.Decimal to standard JavaScript number safely (supports mock numbers too)
+            const amountNumber = typeof tx.amount.toNumber === 'function' ? tx.amount.toNumber() : Number(tx.amount);
+            const absAmount = Math.abs(amountNumber);
+            if (tx.type === 'INCOME') {
+                income += absAmount;
+            } else if (tx.type === 'EXPENSE') {
+                expenses += absAmount;
+            }
+        }
+
+        const balance = income - expenses;
+
+        return {
+            income,
+            expenses,
+            balance,
+        };
+    }
+
     async findOne(id: string) {
         return this.prisma.transaction.findUnique({
             where: { id },
