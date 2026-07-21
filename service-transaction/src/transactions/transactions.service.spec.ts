@@ -57,7 +57,10 @@ describe('TransactionsService', () => {
             const result = await service.findAll();
 
             expect(mockPrismaService.transaction.findMany).toHaveBeenCalledWith({
+                where: {},
                 orderBy: { date: 'desc' },
+                skip: undefined,
+                take: undefined,
                 include: {
                     category: true,
                     wallet: true,
@@ -83,6 +86,8 @@ describe('TransactionsService', () => {
             expect(mockPrismaService.transaction.findMany).toHaveBeenCalledWith({
                 where: { paidById: userId },
                 orderBy: { date: 'desc' },
+                skip: undefined,
+                take: undefined,
                 include: {
                     category: true,
                     wallet: true,
@@ -142,6 +147,36 @@ describe('TransactionsService', () => {
                     email: userEmail,
                     name: 'New User',
                     familyId: 'fam-new',
+                },
+            });
+        });
+
+        it('should filter transactions by date range when startDate and/or endDate are provided', async () => {
+            const userId = 'user-123';
+            const userEmail = 'user@test.com';
+            const userName = 'User One';
+            const mockUser = { id: userId, email: userEmail, name: userName, familyId: 'fam-123' };
+
+            mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+            mockPrismaService.transaction.findMany.mockResolvedValue([]);
+
+            await service.findAll(userId, userEmail, userName, undefined, undefined, '2026-07-01', '2026-07-31');
+
+            expect(mockPrismaService.transaction.findMany).toHaveBeenCalledWith({
+                where: {
+                    paidById: userId,
+                    date: {
+                        gte: new Date('2026-07-01'),
+                        lte: new Date('2026-07-31'),
+                    },
+                },
+                orderBy: { date: 'desc' },
+                skip: undefined,
+                take: undefined,
+                include: {
+                    category: true,
+                    wallet: true,
+                    paidBy: true,
                 },
             });
         });

@@ -1,14 +1,14 @@
 import {
-    Injectable,
-    UnauthorizedException,
-    NotFoundException,
-    ForbiddenException,
     BadRequestException,
+    ForbiddenException,
+    Injectable,
+    NotFoundException,
+    UnauthorizedException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { UpdateTransactionDto } from './dto/update-transaction.dto';
-import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class TransactionsService {
@@ -118,28 +118,38 @@ export class TransactionsService {
         });
     }
 
-    async findAll(userId?: string, userEmail?: string, userName?: string, page?: number, limit?: number) {
+    async findAll(
+        userId?: string,
+        userEmail?: string,
+        userName?: string,
+        page?: number,
+        limit?: number,
+        startDate?: string,
+        endDate?: string,
+    ) {
+        // await new Promise((r) => setTimeout(r, 10000));
         const skip = page && limit ? (page - 1) * limit : undefined;
         const take = limit ? limit : undefined;
 
-        if (userId && userEmail) {
-            await this.getOrCreateUser(userId, userEmail, userName);
-            // Busca apenas as transações do usuário logado com seus relacionamentos
-            return this.prisma.transaction.findMany({
-                where: { paidById: userId },
-                orderBy: { date: 'desc' },
-                skip,
-                take,
-                include: {
-                    category: true,
-                    wallet: true,
-                    paidBy: true,
-                },
-            });
+        const dateFilter: Record<string, any> = {};
+        if (startDate) {
+            dateFilter.gte = new Date(startDate);
+        }
+        if (endDate) {
+            dateFilter.lte = new Date(endDate);
         }
 
-        // Busca todas as transações caso não haja userId (fallback para desenvolvimento local)
+        const whereClause: Record<string, any> = {};
+        if (userId && userEmail) {
+            await this.getOrCreateUser(userId, userEmail, userName);
+            whereClause.paidById = userId;
+        }
+        if (startDate || endDate) {
+            whereClause.date = dateFilter;
+        }
+
         return this.prisma.transaction.findMany({
+            where: whereClause,
             orderBy: { date: 'desc' },
             skip,
             take,

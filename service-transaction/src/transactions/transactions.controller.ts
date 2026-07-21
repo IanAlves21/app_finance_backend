@@ -16,13 +16,27 @@ export class TransactionsController {
     }
 
     @Get()
-    findAll(@Headers() headers: Record<string, string>, @Query('page') page?: string, @Query('limit') limit?: string) {
+    findAll(
+        @Headers() headers: Record<string, string>,
+        @Query('page') page?: string,
+        @Query('limit') limit?: string,
+        @Query('startDate') startDate?: string,
+        @Query('endDate') endDate?: string,
+    ) {
         const userId = headers['x-user-id'];
         const userEmail = headers['x-user-email'];
         const userName = headers['x-user-name'];
         const pageNumber = page ? parseInt(page, 10) : undefined;
         const limitNumber = limit ? parseInt(limit, 10) : undefined;
-        return this.transactionsService.findAll(userId, userEmail, userName, pageNumber, limitNumber);
+        return this.transactionsService.findAll(
+            userId,
+            userEmail,
+            userName,
+            pageNumber,
+            limitNumber,
+            startDate,
+            endDate,
+        );
     }
 
     @Get('categories')
