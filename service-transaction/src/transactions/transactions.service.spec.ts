@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { TransactionsService } from './transactions.service';
+import { TransactionsService, parseSafeDate } from './transactions.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TransactionType } from '@prisma/client';
 
@@ -70,7 +70,7 @@ describe('TransactionsService', () => {
             expect(result).toEqual(mockTransactions);
         });
 
-        it('should return user-specific transactions when userId and userEmail are provided', async () => {
+        it('should return family-wide transactions when userId and userEmail are provided', async () => {
             const userId = 'user-123';
             const userEmail = 'user@test.com';
             const userName = 'User One';
@@ -84,7 +84,7 @@ describe('TransactionsService', () => {
 
             expect(mockPrismaService.user.findUnique).toHaveBeenCalledWith({ where: { id: userId } });
             expect(mockPrismaService.transaction.findMany).toHaveBeenCalledWith({
-                where: { paidById: userId },
+                where: { familyId: 'fam-123' },
                 orderBy: { date: 'desc' },
                 skip: undefined,
                 take: undefined,
@@ -109,7 +109,7 @@ describe('TransactionsService', () => {
             await service.findAll(userId, userEmail, userName, 2, 10);
 
             expect(mockPrismaService.transaction.findMany).toHaveBeenCalledWith({
-                where: { paidById: userId },
+                where: { familyId: 'fam-123' },
                 orderBy: { date: 'desc' },
                 skip: 10,
                 take: 10,
@@ -164,7 +164,7 @@ describe('TransactionsService', () => {
 
             expect(mockPrismaService.transaction.findMany).toHaveBeenCalledWith({
                 where: {
-                    paidById: userId,
+                    familyId: 'fam-123',
                     date: {
                         gte: new Date('2026-07-01'),
                         lte: new Date('2026-07-31'),
@@ -201,7 +201,7 @@ describe('TransactionsService', () => {
 
             expect(mockPrismaService.transaction.findMany).toHaveBeenCalledWith({
                 where: {
-                    paidById: userId,
+                    familyId: 'fam-123',
                     date: {
                         gte: new Date('2026-07-01'),
                         lte: new Date('2026-07-31'),
@@ -328,6 +328,113 @@ describe('TransactionsService', () => {
             await expect(service.remove('tx-123', userId, userEmail, userName)).rejects.toThrow(
                 'Você não tem permissão para excluir esta transação.',
             );
+        });
+    });
+
+    describe('getMonthlySpending', () => {
+        it('should correctly return chronological monthly aggregated transactions for the last 6 months', async () => {
+            const userId = 'user-123';
+            const userEmail = 'user@test.com';
+            const userName = 'User One';
+            const mockUser = { id: userId, email: userEmail, name: userName, familyId: 'fam-123' };
+
+            const now = new Date();
+            const mockTransactions = [
+                {
+                    amount: { toNumber: () => 1500 },
+                    type: TransactionType.INCOME,
+                    date: new Date(now.getFullYear(), now.getMonth(), 15),
+                    categoryId: 'cat-1',
+                    category: { id: 'cat-1', name: 'Freelance', icon: 'briefcase', color: '#10B981' },
+                    paidById: 'user-123',
+                    paidBy: { name: 'User One' },
+                },
+                {
+                    amount: { toNumber: () => 450 },
+                    type: TransactionType.EXPENSE,
+                    date: new Date(now.getFullYear(), now.getMonth(), 16),
+                    categoryId: 'cat-2',
+                    category: { id: 'cat-2', name: 'Compras', icon: 'shopping-cart', color: '#8B5CF6' },
+                    paidById: 'user-123',
+                    paidBy: { name: 'User One' },
+                },
+            ];
+
+            mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+            mockPrismaService.transaction.findMany.mockResolvedValue(mockTransactions);
+
+            const result = await service.getMonthlySpending(userId, userEmail, userName, 6);
+
+            expect(result).toHaveLength(6);
+            const lastMonthData = result[5];
+            expect(lastMonthData.income).toBe(1500);
+            expect(lastMonthData.expense).toBe(450);
+            expect(lastMonthData.month).toBe(now.getMonth() + 1);
+            expect(lastMonthData.year).toBe(now.getFullYear());
+            expect(lastMonthData.categories).toHaveLength(1);
+            expect(lastMonthData.categories[0].name).toBe('Compras');
+            expect(lastMonthData.byUser).toHaveLength(1);
+            expect(lastMonthData.byUser[0].name).toBe('User One');
+        });
+    });
+
+    describe('parseSafeDate', () => {
+        it('should correctly parse standard ISO date strings', () => {
+            const date = parseSafeDate('2026-07-27');
+            expect(date).toBeInstanceOf(Date);
+            expect(date?.getUTCFullYear()).toBe(2026);
+            expect(date?.getUTCMonth()).toBe(6); // July is 6 (0-indexed)
+            expect(date?.getUTCDate()).toBe(27);
+        });
+
+        it('should correctly parse Brazilian slash formatted dates (DD/MM/YYYY)', () => {
+            const date = parseSafeDate('27/07/2026');
+            expect(date).toBeInstanceOf(Date);
+            expect(date?.getUTCFullYear()).toBe(2026);
+            expect(date?.getUTCMonth()).toBe(6);
+            expect(date?.getUTCDate()).toBe(27);
+        });
+
+        it('should correctly parse Brazilian dash formatted dates (DD-MM-YYYY)', () => {
+            const date = parseSafeDate('27-07-2026');
+            expect(date).toBeInstanceOf(Date);
+            expect(date?.getUTCFullYear()).toBe(2026);
+            expect(date?.getUTCMonth()).toBe(6);
+            expect(date?.getUTCDate()).toBe(27);
+        });
+
+        it('should correctly parse Brazilian dates with single-digit day and month', () => {
+            const dateSlash = parseSafeDate('5/7/2026');
+            expect(dateSlash?.getUTCFullYear()).toBe(2026);
+            expect(dateSlash?.getUTCMonth()).toBe(6);
+            expect(dateSlash?.getUTCDate()).toBe(5);
+
+            const dateDash = parseSafeDate('5-7-2026');
+            expect(dateDash?.getUTCFullYear()).toBe(2026);
+            expect(dateDash?.getUTCMonth()).toBe(6);
+            expect(dateDash?.getUTCDate()).toBe(5);
+        });
+
+        it('should correctly fall back to US formatting if month is first (MM/DD/YYYY)', () => {
+            const date = parseSafeDate('07/27/2026');
+            expect(date).toBeInstanceOf(Date);
+            expect(date?.getUTCFullYear()).toBe(2026);
+            expect(date?.getUTCMonth()).toBe(6);
+            expect(date?.getUTCDate()).toBe(27);
+        });
+
+        it('should return null for invalid date strings', () => {
+            expect(parseSafeDate('invalid')).toBeNull();
+            expect(parseSafeDate('32/07/2026')).toBeNull(); // Day 32 is invalid
+            expect(parseSafeDate('27/13/2026')).toBeNull(); // Month 13 is invalid
+        });
+
+        it('should return null for special strings like undefined or null', () => {
+            expect(parseSafeDate('undefined')).toBeNull();
+            expect(parseSafeDate('null')).toBeNull();
+            expect(parseSafeDate('')).toBeNull();
+            expect(parseSafeDate(null)).toBeNull();
+            expect(parseSafeDate(undefined)).toBeNull();
         });
     });
 });

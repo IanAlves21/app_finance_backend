@@ -10,6 +10,65 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { UpdateTransactionDto } from './dto/update-transaction.dto';
 
+export function parseSafeDate(dateStr: any): Date | null {
+    if (!dateStr) return null;
+    const cleanStr = String(dateStr).trim();
+    if (cleanStr === '' || cleanStr === 'undefined' || cleanStr === 'null') {
+        return null;
+    }
+
+    // Check for DD/MM/YYYY format
+    const brSlashRegex = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(.*)$/;
+    if (brSlashRegex.test(cleanStr)) {
+        const match = cleanStr.match(brSlashRegex);
+        if (match) {
+            const part1 = parseInt(match[1], 10);
+            const part2 = parseInt(match[2], 10);
+            const year = match[3];
+            const rest = match[4] || '';
+            // If part1 is a valid day (1-31) and part2 is a valid month (1-12)
+            if (part1 <= 31 && part2 <= 12) {
+                const day = match[1].padStart(2, '0');
+                const month = match[2].padStart(2, '0');
+                const isoStr = `${year}-${month}-${day}${rest.replace(/^\s+/, 'T')}`;
+                const parsed = new Date(isoStr);
+                if (!isNaN(parsed.getTime())) {
+                    return parsed;
+                }
+            }
+        }
+    }
+
+    // Check for DD-MM-YYYY format
+    const brDashRegex = /^(\d{1,2})-(\d{1,2})-(\d{4})(.*)$/;
+    if (brDashRegex.test(cleanStr)) {
+        const match = cleanStr.match(brDashRegex);
+        if (match) {
+            const part1 = parseInt(match[1], 10);
+            const part2 = parseInt(match[2], 10);
+            const year = match[3];
+            const rest = match[4] || '';
+            if (part1 <= 31 && part2 <= 12) {
+                const day = match[1].padStart(2, '0');
+                const month = match[2].padStart(2, '0');
+                const isoStr = `${year}-${month}-${day}${rest.replace(/^\s+/, 'T')}`;
+                const parsed = new Date(isoStr);
+                if (!isNaN(parsed.getTime())) {
+                    return parsed;
+                }
+            }
+        }
+    }
+
+    // Default fallback to standard Date constructor
+    const parsed = new Date(cleanStr);
+    if (!isNaN(parsed.getTime())) {
+        return parsed;
+    }
+
+    return null;
+}
+
 @Injectable()
 export class TransactionsService {
     constructor(private prisma: PrismaService) {}
@@ -109,7 +168,7 @@ export class TransactionsService {
                 description: createTransactionDto.description,
                 amount: createTransactionDto.amount,
                 type: createTransactionDto.type,
-                date: new Date(createTransactionDto.date),
+                date: parseSafeDate(createTransactionDto.date) || new Date(),
                 familyId: finalFamilyId,
                 paidById: finalUserId,
                 walletId: finalWalletId,
@@ -126,26 +185,33 @@ export class TransactionsService {
         limit?: number,
         startDate?: string,
         endDate?: string,
+        categoryId?: string,
     ) {
         // await new Promise((r) => setTimeout(r, 10000));
         const skip = page && limit ? (page - 1) * limit : undefined;
         const take = limit ? limit : undefined;
 
+        const parsedStartDate = parseSafeDate(startDate);
+        const parsedEndDate = parseSafeDate(endDate);
+
         const dateFilter: Record<string, any> = {};
-        if (startDate) {
-            dateFilter.gte = new Date(startDate);
+        if (parsedStartDate) {
+            dateFilter.gte = parsedStartDate;
         }
-        if (endDate) {
-            dateFilter.lte = new Date(endDate);
+        if (parsedEndDate) {
+            dateFilter.lte = parsedEndDate;
         }
 
         const whereClause: Record<string, any> = {};
         if (userId && userEmail) {
-            await this.getOrCreateUser(userId, userEmail, userName);
-            whereClause.paidById = userId;
+            const dbUser = await this.getOrCreateUser(userId, userEmail, userName);
+            whereClause.familyId = dbUser.familyId;
         }
-        if (startDate || endDate) {
+        if (parsedStartDate || parsedEndDate) {
             whereClause.date = dateFilter;
+        }
+        if (categoryId) {
+            whereClause.categoryId = categoryId;
         }
 
         return this.prisma.transaction.findMany({
@@ -162,20 +228,23 @@ export class TransactionsService {
     }
 
     async getSummary(userId?: string, userEmail?: string, userName?: string, startDate?: string, endDate?: string) {
+        const parsedStartDate = parseSafeDate(startDate);
+        const parsedEndDate = parseSafeDate(endDate);
+
         const dateFilter: Record<string, any> = {};
-        if (startDate) {
-            dateFilter.gte = new Date(startDate);
+        if (parsedStartDate) {
+            dateFilter.gte = parsedStartDate;
         }
-        if (endDate) {
-            dateFilter.lte = new Date(endDate);
+        if (parsedEndDate) {
+            dateFilter.lte = parsedEndDate;
         }
 
         const whereClause: Record<string, any> = {};
         if (userId && userEmail) {
-            await this.getOrCreateUser(userId, userEmail, userName);
-            whereClause.paidById = userId;
+            const dbUser = await this.getOrCreateUser(userId, userEmail, userName);
+            whereClause.familyId = dbUser.familyId;
         }
-        if (startDate || endDate) {
+        if (parsedStartDate || parsedEndDate) {
             whereClause.date = dateFilter;
         }
 
@@ -225,7 +294,12 @@ export class TransactionsService {
     async update(id: string, updateTransactionDto: UpdateTransactionDto) {
         const dataToUpdate: Prisma.TransactionUpdateInput = { ...updateTransactionDto };
         if (updateTransactionDto.date) {
-            dataToUpdate.date = new Date(updateTransactionDto.date);
+            const parsedDate = parseSafeDate(updateTransactionDto.date);
+            if (parsedDate) {
+                dataToUpdate.date = parsedDate;
+            } else {
+                delete dataToUpdate.date;
+            }
         }
 
         return this.prisma.transaction.update({
@@ -373,5 +447,226 @@ export class TransactionsService {
         return this.prisma.category.delete({
             where: { id },
         });
+    }
+
+    async getMonthlySpending(
+        userId?: string,
+        userEmail?: string,
+        userName?: string,
+        limitNumber = 6,
+        timeframe = 'MONTHLY',
+    ) {
+        const whereClause: Record<string, any> = {};
+
+        if (userId && userEmail) {
+            const dbUser = await this.getOrCreateUser(userId, userEmail, userName);
+            whereClause.familyId = dbUser.familyId;
+        } else {
+            const family = await this.prisma.familyGroup.findFirst();
+            if (family) {
+                whereClause.familyId = family.id;
+            }
+        }
+
+        const now = new Date();
+        let startDate: Date;
+
+        if (timeframe === 'YEARLY') {
+            startDate = new Date(now.getFullYear() - limitNumber + 1, 0, 1);
+        } else if (timeframe === 'WEEKLY') {
+            const currentWeekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay());
+            startDate = new Date(currentWeekStart.getTime() - (limitNumber - 1) * 7 * 24 * 60 * 60 * 1000);
+        } else {
+            startDate = new Date(now.getFullYear(), now.getMonth() - limitNumber + 1, 1);
+        }
+
+        whereClause.date = {
+            gte: startDate,
+        };
+
+        const transactions = await this.prisma.transaction.findMany({
+            where: whereClause,
+            include: {
+                category: true,
+                paidBy: true,
+            },
+        });
+
+        const dataMap: Record<string, { year: number; month?: number; day?: number; income: number; expense: number; categories: any; byUser: any }> = {};
+
+        if (timeframe === 'YEARLY') {
+            const currentYear = now.getFullYear();
+            for (let i = limitNumber - 1; i >= 0; i--) {
+                const y = currentYear - i;
+                dataMap[String(y)] = {
+                    year: y,
+                    income: 0,
+                    expense: 0,
+                    categories: {},
+                    byUser: {},
+                };
+            }
+
+            for (const tx of transactions) {
+                const txDate = new Date(tx.date);
+                const key = String(txDate.getFullYear());
+                if (dataMap[key]) {
+                    const amountNumber = typeof tx.amount.toNumber === 'function' ? tx.amount.toNumber() : Number(tx.amount);
+                    const absAmount = Math.abs(amountNumber);
+                    if (tx.type === 'INCOME') {
+                        dataMap[key].income += absAmount;
+                    } else if (tx.type === 'EXPENSE') {
+                        dataMap[key].expense += absAmount;
+
+                        const catId = tx.categoryId;
+                        if (!dataMap[key].categories[catId]) {
+                            dataMap[key].categories[catId] = {
+                                id: catId,
+                                name: tx.category.name,
+                                icon: tx.category.icon || 'category',
+                                color: tx.category.color || '#1A2D5A',
+                                amount: 0,
+                            };
+                        }
+                        dataMap[key].categories[catId].amount += absAmount;
+
+                        const userId = tx.paidById;
+                        if (!dataMap[key].byUser[userId]) {
+                            dataMap[key].byUser[userId] = {
+                                id: userId,
+                                name: tx.paidBy.name,
+                                amount: 0,
+                            };
+                        }
+                        dataMap[key].byUser[userId].amount += absAmount;
+                    }
+                }
+            }
+        } else if (timeframe === 'WEEKLY') {
+            const currentWeekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay());
+            for (let i = limitNumber - 1; i >= 0; i--) {
+                const d = new Date(currentWeekStart.getTime() - i * 7 * 24 * 60 * 60 * 1000);
+                const key = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+                dataMap[key] = {
+                    year: d.getFullYear(),
+                    month: d.getMonth() + 1,
+                    day: d.getDate(),
+                    income: 0,
+                    expense: 0,
+                    categories: {},
+                    byUser: {},
+                };
+            }
+
+            for (const tx of transactions) {
+                const txDate = new Date(tx.date);
+                const txWeekStart = new Date(txDate.getFullYear(), txDate.getMonth(), txDate.getDate() - txDate.getDay());
+                const key = `${txWeekStart.getFullYear()}-${txWeekStart.getMonth() + 1}-${txWeekStart.getDate()}`;
+                if (dataMap[key]) {
+                    const amountNumber = typeof tx.amount.toNumber === 'function' ? tx.amount.toNumber() : Number(tx.amount);
+                    const absAmount = Math.abs(amountNumber);
+                    if (tx.type === 'INCOME') {
+                        dataMap[key].income += absAmount;
+                    } else if (tx.type === 'EXPENSE') {
+                        dataMap[key].expense += absAmount;
+
+                        const catId = tx.categoryId;
+                        if (!dataMap[key].categories[catId]) {
+                            dataMap[key].categories[catId] = {
+                                id: catId,
+                                name: tx.category.name,
+                                icon: tx.category.icon || 'category',
+                                color: tx.category.color || '#1A2D5A',
+                                amount: 0,
+                            };
+                        }
+                        dataMap[key].categories[catId].amount += absAmount;
+
+                        const userId = tx.paidById;
+                        if (!dataMap[key].byUser[userId]) {
+                            dataMap[key].byUser[userId] = {
+                                id: userId,
+                                name: tx.paidBy.name,
+                                amount: 0,
+                            };
+                        }
+                        dataMap[key].byUser[userId].amount += absAmount;
+                    }
+                }
+            }
+        } else {
+            for (let i = limitNumber - 1; i >= 0; i--) {
+                const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                dataMap[key] = {
+                    year: d.getFullYear(),
+                    month: d.getMonth() + 1,
+                    income: 0,
+                    expense: 0,
+                    categories: {},
+                    byUser: {},
+                };
+            }
+
+            for (const tx of transactions) {
+                const txDate = new Date(tx.date);
+                const key = `${txDate.getFullYear()}-${String(txDate.getMonth() + 1).padStart(2, '0')}`;
+                if (dataMap[key]) {
+                    const amountNumber = typeof tx.amount.toNumber === 'function' ? tx.amount.toNumber() : Number(tx.amount);
+                    const absAmount = Math.abs(amountNumber);
+                    if (tx.type === 'INCOME') {
+                        dataMap[key].income += absAmount;
+                    } else if (tx.type === 'EXPENSE') {
+                        dataMap[key].expense += absAmount;
+
+                        const catId = tx.categoryId;
+                        if (!dataMap[key].categories[catId]) {
+                            dataMap[key].categories[catId] = {
+                                id: catId,
+                                name: tx.category.name,
+                                icon: tx.category.icon || 'category',
+                                color: tx.category.color || '#1A2D5A',
+                                amount: 0,
+                            };
+                        }
+                        dataMap[key].categories[catId].amount += absAmount;
+
+                        const userId = tx.paidById;
+                        if (!dataMap[key].byUser[userId]) {
+                            dataMap[key].byUser[userId] = {
+                                id: userId,
+                                name: tx.paidBy.name,
+                                amount: 0,
+                            };
+                        }
+                        dataMap[key].byUser[userId].amount += absAmount;
+                    }
+                }
+            }
+        }
+
+        // Calculate percentages and convert categories/users maps to sorted lists
+        for (const key of Object.keys(dataMap)) {
+            const interval = dataMap[key];
+            const totalExpense = interval.expense;
+            
+            // Categories
+            const categoryList: any[] = Object.values(interval.categories);
+            for (const cat of categoryList) {
+                cat.percentage = totalExpense > 0 ? cat.amount / totalExpense : 0;
+            }
+            categoryList.sort((a, b) => b.amount - a.amount);
+            interval.categories = categoryList;
+
+            // Users
+            const userList: any[] = Object.values(interval.byUser);
+            for (const u of userList) {
+                u.percentage = totalExpense > 0 ? u.amount / totalExpense : 0;
+            }
+            userList.sort((a, b) => b.amount - a.amount);
+            interval.byUser = userList;
+        }
+
+        return Object.values(dataMap);
     }
 }
