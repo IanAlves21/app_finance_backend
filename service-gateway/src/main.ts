@@ -130,6 +130,70 @@ async function bootstrap(): Promise<void> {
         }),
     );
 
+    // 4. Rota de Analytics (Protegida)
+    app.use(
+        '/analytics',
+        authMiddleware as any,
+        createProxyMiddleware({
+            target: 'http://localhost:3003/analytics', // Repomos o /analytics no destino
+            changeOrigin: true,
+            logger: console,
+            on: {
+                proxyReq: (proxyReq, req: any) => {
+                    proxyReq.setHeader(
+                        'x-gateway-signature',
+                        process.env.API_GATEWAY_SECRET || '',
+                    );
+
+                    const authReq = req as AuthenticatedRequest;
+                    if (authReq.user) {
+                        proxyReq.setHeader('x-user-id', authReq.user.sub || '');
+                        proxyReq.setHeader(
+                            'x-user-email',
+                            authReq.user.email || '',
+                        );
+                        proxyReq.setHeader(
+                            'x-user-name',
+                            encodeURIComponent(authReq.user.name || ''),
+                        );
+                    }
+                },
+            },
+        }),
+    );
+
+    // 5. Rota de Budgets (Protegida)
+    app.use(
+        '/budgets',
+        authMiddleware as any,
+        createProxyMiddleware({
+            target: 'http://localhost:3000/budgets', // Repomos o /budgets no destino
+            changeOrigin: true,
+            logger: console,
+            on: {
+                proxyReq: (proxyReq, req: any) => {
+                    proxyReq.setHeader(
+                        'x-gateway-signature',
+                        process.env.API_GATEWAY_SECRET || '',
+                    );
+
+                    const authReq = req as AuthenticatedRequest;
+                    if (authReq.user) {
+                        proxyReq.setHeader('x-user-id', authReq.user.sub || '');
+                        proxyReq.setHeader(
+                            'x-user-email',
+                            authReq.user.email || '',
+                        );
+                        proxyReq.setHeader(
+                            'x-user-name',
+                            encodeURIComponent(authReq.user.name || ''),
+                        );
+                    }
+                },
+            },
+        }),
+    );
+
     await app.listen(8080, '0.0.0.0');
     console.log(`🚀 API Gateway rodando na porta 8080...`);
 }

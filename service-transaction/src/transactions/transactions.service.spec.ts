@@ -33,7 +33,14 @@ describe('TransactionsService', () => {
 
     beforeEach(async () => {
         const module: TestingModule = await Test.createTestingModule({
-            providers: [TransactionsService, { provide: PrismaService, useValue: mockPrismaService }],
+            providers: [
+                TransactionsService,
+                { provide: PrismaService, useValue: mockPrismaService },
+                {
+                    provide: 'ANALYTICS_SERVICE',
+                    useValue: { emit: jest.fn() },
+                },
+            ],
         }).compile();
 
         service = module.get<TransactionsService>(TransactionsService);
@@ -233,6 +240,7 @@ describe('TransactionsService', () => {
                 amount: 150,
                 type: TransactionType.EXPENSE,
                 date: '2026-07-15',
+                paymentMethod: 'CREDIT' as any,
             };
 
             mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
@@ -240,7 +248,7 @@ describe('TransactionsService', () => {
             mockPrismaService.wallet.findFirst.mockResolvedValue(mockWallet);
             mockPrismaService.transaction.create.mockResolvedValue({ id: 'tx-123', ...createDto });
 
-            const result = await service.create(createDto, userId, userEmail, userName);
+            const result = await service.create(createDto as any, userId, userEmail, userName);
 
             expect(mockPrismaService.transaction.create).toHaveBeenCalledWith({
                 data: {
@@ -252,6 +260,13 @@ describe('TransactionsService', () => {
                     paidById: userId,
                     walletId: 'wal-123',
                     categoryId: 'cat-123',
+                    paymentMethod: 'CREDIT',
+                },
+                include: {
+                    category: true,
+                    family: true,
+                    paidBy: true,
+                    wallet: true,
                 },
             });
             expect(result).toBeDefined();
@@ -273,6 +288,12 @@ describe('TransactionsService', () => {
                 data: {
                     description: 'Updated Description',
                     date: new Date('2026-07-16'),
+                },
+                include: {
+                    category: true,
+                    family: true,
+                    paidBy: true,
+                    wallet: true,
                 },
             });
             expect(result).toBeDefined();
@@ -328,53 +349,6 @@ describe('TransactionsService', () => {
             await expect(service.remove('tx-123', userId, userEmail, userName)).rejects.toThrow(
                 'Você não tem permissão para excluir esta transação.',
             );
-        });
-    });
-
-    describe('getMonthlySpending', () => {
-        it('should correctly return chronological monthly aggregated transactions for the last 6 months', async () => {
-            const userId = 'user-123';
-            const userEmail = 'user@test.com';
-            const userName = 'User One';
-            const mockUser = { id: userId, email: userEmail, name: userName, familyId: 'fam-123' };
-
-            const now = new Date();
-            const mockTransactions = [
-                {
-                    amount: { toNumber: () => 1500 },
-                    type: TransactionType.INCOME,
-                    date: new Date(now.getFullYear(), now.getMonth(), 15),
-                    categoryId: 'cat-1',
-                    category: { id: 'cat-1', name: 'Freelance', icon: 'briefcase', color: '#10B981' },
-                    paidById: 'user-123',
-                    paidBy: { name: 'User One' },
-                },
-                {
-                    amount: { toNumber: () => 450 },
-                    type: TransactionType.EXPENSE,
-                    date: new Date(now.getFullYear(), now.getMonth(), 16),
-                    categoryId: 'cat-2',
-                    category: { id: 'cat-2', name: 'Compras', icon: 'shopping-cart', color: '#8B5CF6' },
-                    paidById: 'user-123',
-                    paidBy: { name: 'User One' },
-                },
-            ];
-
-            mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
-            mockPrismaService.transaction.findMany.mockResolvedValue(mockTransactions);
-
-            const result = await service.getMonthlySpending(userId, userEmail, userName, 6);
-
-            expect(result).toHaveLength(6);
-            const lastMonthData = result[5];
-            expect(lastMonthData.income).toBe(1500);
-            expect(lastMonthData.expense).toBe(450);
-            expect(lastMonthData.month).toBe(now.getMonth() + 1);
-            expect(lastMonthData.year).toBe(now.getFullYear());
-            expect(lastMonthData.categories).toHaveLength(1);
-            expect(lastMonthData.categories[0].name).toBe('Compras');
-            expect(lastMonthData.byUser).toHaveLength(1);
-            expect(lastMonthData.byUser[0].name).toBe('User One');
         });
     });
 

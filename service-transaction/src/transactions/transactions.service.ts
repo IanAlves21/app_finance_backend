@@ -4,7 +4,9 @@ import {
     Injectable,
     NotFoundException,
     UnauthorizedException,
+    Inject,
 } from '@nestjs/common';
+import { ClientProxy } from '@nestjs/microservices';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
@@ -71,7 +73,10 @@ export function parseSafeDate(dateStr: any): Date | null {
 
 @Injectable()
 export class TransactionsService {
-    constructor(private prisma: PrismaService) {}
+    constructor(
+        private prisma: PrismaService,
+        @Inject('ANALYTICS_SERVICE') private readonly analyticsClient: ClientProxy,
+    ) {}
 
     private async getOrCreateUser(userId: string, userEmail: string, userName?: string) {
         const decodedName = userName ? decodeURIComponent(userName) : 'Usuário';
@@ -114,6 +119,10 @@ export class TransactionsService {
     }
 
     async create(createTransactionDto: CreateTransactionDto, userId?: string, userEmail?: string, userName?: string) {
+        if (createTransactionDto.type === 'EXPENSE' && !createTransactionDto.paymentMethod) {
+            throw new BadRequestException('Método de pagamento é obrigatório para despesas.');
+        }
+
         let finalUserId = userId;
         let finalFamilyId = '8a9951a1-fbcc-4769-bcea-5eef53bf26bf'; // fallback ID do Seed (Lucas & Mariana)
 
@@ -163,7 +172,54 @@ export class TransactionsService {
             }
         }
 
-        return this.prisma.transaction.create({
+        const installments = createTransactionDto.installments && createTransactionDto.installments > 1
+            ? createTransactionDto.installments
+            : 1;
+
+        if (createTransactionDto.paymentMethod === 'CREDIT' && installments > 1) {
+            const createdTransactions: any[] = [];
+            const baseAmount = createTransactionDto.amount / installments;
+            const installmentAmount = Math.round(baseAmount * 100) / 100;
+            const originalDate = parseSafeDate(createTransactionDto.date) || new Date();
+
+            for (let i = 1; i <= installments; i++) {
+                let finalAmount = installmentAmount;
+                if (i === installments) {
+                    const totalDivided = installmentAmount * (installments - 1);
+                    finalAmount = Math.round((createTransactionDto.amount - totalDivided) * 100) / 100;
+                }
+
+                const installmentDate = new Date(originalDate);
+                installmentDate.setMonth(originalDate.getMonth() + (i - 1));
+
+                const transaction = await this.prisma.transaction.create({
+                    data: {
+                        description: `${createTransactionDto.description} (${i}/${installments})`,
+                        amount: finalAmount,
+                        type: createTransactionDto.type,
+                        date: installmentDate,
+                        familyId: finalFamilyId,
+                        paidById: finalUserId,
+                        walletId: finalWalletId,
+                        categoryId: finalCategoryId,
+                        paymentMethod: createTransactionDto.paymentMethod,
+                    },
+                    include: {
+                        category: true,
+                        paidBy: true,
+                        wallet: true,
+                        family: true,
+                    },
+                });
+
+                this.analyticsClient.emit('transaction.created', transaction);
+                createdTransactions.push(transaction);
+            }
+
+            return createdTransactions[0];
+        }
+
+        const transaction = await this.prisma.transaction.create({
             data: {
                 description: createTransactionDto.description,
                 amount: createTransactionDto.amount,
@@ -173,8 +229,20 @@ export class TransactionsService {
                 paidById: finalUserId,
                 walletId: finalWalletId,
                 categoryId: finalCategoryId,
+                paymentMethod: createTransactionDto.paymentMethod,
+            },
+            include: {
+                category: true,
+                paidBy: true,
+                wallet: true,
+                family: true,
             },
         });
+
+        // Emit asynchronously to RabbitMQ
+        this.analyticsClient.emit('transaction.created', transaction);
+
+        return transaction;
     }
 
     async findAll(
@@ -292,6 +360,10 @@ export class TransactionsService {
     }
 
     async update(id: string, updateTransactionDto: UpdateTransactionDto) {
+        if (updateTransactionDto.type === 'EXPENSE' && updateTransactionDto.paymentMethod === null) {
+            throw new BadRequestException('Método de pagamento é obrigatório para despesas.');
+        }
+
         const dataToUpdate: Prisma.TransactionUpdateInput = { ...updateTransactionDto };
         if (updateTransactionDto.date) {
             const parsedDate = parseSafeDate(updateTransactionDto.date);
@@ -302,10 +374,21 @@ export class TransactionsService {
             }
         }
 
-        return this.prisma.transaction.update({
+        const updatedTx = await this.prisma.transaction.update({
             where: { id },
             data: dataToUpdate,
+            include: {
+                category: true,
+                paidBy: true,
+                wallet: true,
+                family: true,
+            },
         });
+
+        // Emit asynchronously to RabbitMQ
+        this.analyticsClient.emit('transaction.updated', updatedTx);
+
+        return updatedTx;
     }
 
     async remove(id: string, userId?: string, userEmail?: string, userName?: string) {
@@ -325,7 +408,12 @@ export class TransactionsService {
             }
         }
 
-        return this.prisma.transaction.delete({ where: { id } });
+        const deletedTx = await this.prisma.transaction.delete({ where: { id } });
+
+        // Emit asynchronously to RabbitMQ
+        this.analyticsClient.emit('transaction.deleted', { id: deletedTx.id });
+
+        return deletedTx;
     }
 
     async findAllCategories(userId?: string, userEmail?: string, userName?: string) {
@@ -359,7 +447,7 @@ export class TransactionsService {
             finalFamilyId = dbUser.familyId;
         }
 
-        return this.prisma.category.create({
+        const category = await this.prisma.category.create({
             data: {
                 name: data.name,
                 type: data.type,
@@ -368,6 +456,11 @@ export class TransactionsService {
                 familyId: finalFamilyId,
             },
         });
+
+        // Emit asynchronously to RabbitMQ
+        this.analyticsClient.emit('category.created', category);
+
+        return category;
     }
 
     async updateCategory(
@@ -399,7 +492,7 @@ export class TransactionsService {
             throw new ForbiddenException('You do not have permission to modify this category');
         }
 
-        return this.prisma.category.update({
+        const updatedCategory = await this.prisma.category.update({
             where: { id },
             data: {
                 name: data.name,
@@ -408,6 +501,11 @@ export class TransactionsService {
                 color: data.color,
             },
         });
+
+        // Emit asynchronously to RabbitMQ
+        this.analyticsClient.emit('category.updated', updatedCategory);
+
+        return updatedCategory;
     }
 
     async deleteCategory(id: string, userId?: string, userEmail?: string, userName?: string) {
@@ -444,229 +542,13 @@ export class TransactionsService {
             );
         }
 
-        return this.prisma.category.delete({
+        const deletedCategory = await this.prisma.category.delete({
             where: { id },
         });
-    }
 
-    async getMonthlySpending(
-        userId?: string,
-        userEmail?: string,
-        userName?: string,
-        limitNumber = 6,
-        timeframe = 'MONTHLY',
-    ) {
-        const whereClause: Record<string, any> = {};
+        // Emit asynchronously to RabbitMQ
+        this.analyticsClient.emit('category.deleted', { id: deletedCategory.id });
 
-        if (userId && userEmail) {
-            const dbUser = await this.getOrCreateUser(userId, userEmail, userName);
-            whereClause.familyId = dbUser.familyId;
-        } else {
-            const family = await this.prisma.familyGroup.findFirst();
-            if (family) {
-                whereClause.familyId = family.id;
-            }
-        }
-
-        const now = new Date();
-        let startDate: Date;
-
-        if (timeframe === 'YEARLY') {
-            startDate = new Date(now.getFullYear() - limitNumber + 1, 0, 1);
-        } else if (timeframe === 'WEEKLY') {
-            const currentWeekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay());
-            startDate = new Date(currentWeekStart.getTime() - (limitNumber - 1) * 7 * 24 * 60 * 60 * 1000);
-        } else {
-            startDate = new Date(now.getFullYear(), now.getMonth() - limitNumber + 1, 1);
-        }
-
-        whereClause.date = {
-            gte: startDate,
-        };
-
-        const transactions = await this.prisma.transaction.findMany({
-            where: whereClause,
-            include: {
-                category: true,
-                paidBy: true,
-            },
-        });
-
-        const dataMap: Record<string, { year: number; month?: number; day?: number; income: number; expense: number; categories: any; byUser: any }> = {};
-
-        if (timeframe === 'YEARLY') {
-            const currentYear = now.getFullYear();
-            for (let i = limitNumber - 1; i >= 0; i--) {
-                const y = currentYear - i;
-                dataMap[String(y)] = {
-                    year: y,
-                    income: 0,
-                    expense: 0,
-                    categories: {},
-                    byUser: {},
-                };
-            }
-
-            for (const tx of transactions) {
-                const txDate = new Date(tx.date);
-                const key = String(txDate.getFullYear());
-                if (dataMap[key]) {
-                    const amountNumber = typeof tx.amount.toNumber === 'function' ? tx.amount.toNumber() : Number(tx.amount);
-                    const absAmount = Math.abs(amountNumber);
-                    if (tx.type === 'INCOME') {
-                        dataMap[key].income += absAmount;
-                    } else if (tx.type === 'EXPENSE') {
-                        dataMap[key].expense += absAmount;
-
-                        const catId = tx.categoryId;
-                        if (!dataMap[key].categories[catId]) {
-                            dataMap[key].categories[catId] = {
-                                id: catId,
-                                name: tx.category.name,
-                                icon: tx.category.icon || 'category',
-                                color: tx.category.color || '#1A2D5A',
-                                amount: 0,
-                            };
-                        }
-                        dataMap[key].categories[catId].amount += absAmount;
-
-                        const userId = tx.paidById;
-                        if (!dataMap[key].byUser[userId]) {
-                            dataMap[key].byUser[userId] = {
-                                id: userId,
-                                name: tx.paidBy.name,
-                                amount: 0,
-                            };
-                        }
-                        dataMap[key].byUser[userId].amount += absAmount;
-                    }
-                }
-            }
-        } else if (timeframe === 'WEEKLY') {
-            const currentWeekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay());
-            for (let i = limitNumber - 1; i >= 0; i--) {
-                const d = new Date(currentWeekStart.getTime() - i * 7 * 24 * 60 * 60 * 1000);
-                const key = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
-                dataMap[key] = {
-                    year: d.getFullYear(),
-                    month: d.getMonth() + 1,
-                    day: d.getDate(),
-                    income: 0,
-                    expense: 0,
-                    categories: {},
-                    byUser: {},
-                };
-            }
-
-            for (const tx of transactions) {
-                const txDate = new Date(tx.date);
-                const txWeekStart = new Date(txDate.getFullYear(), txDate.getMonth(), txDate.getDate() - txDate.getDay());
-                const key = `${txWeekStart.getFullYear()}-${txWeekStart.getMonth() + 1}-${txWeekStart.getDate()}`;
-                if (dataMap[key]) {
-                    const amountNumber = typeof tx.amount.toNumber === 'function' ? tx.amount.toNumber() : Number(tx.amount);
-                    const absAmount = Math.abs(amountNumber);
-                    if (tx.type === 'INCOME') {
-                        dataMap[key].income += absAmount;
-                    } else if (tx.type === 'EXPENSE') {
-                        dataMap[key].expense += absAmount;
-
-                        const catId = tx.categoryId;
-                        if (!dataMap[key].categories[catId]) {
-                            dataMap[key].categories[catId] = {
-                                id: catId,
-                                name: tx.category.name,
-                                icon: tx.category.icon || 'category',
-                                color: tx.category.color || '#1A2D5A',
-                                amount: 0,
-                            };
-                        }
-                        dataMap[key].categories[catId].amount += absAmount;
-
-                        const userId = tx.paidById;
-                        if (!dataMap[key].byUser[userId]) {
-                            dataMap[key].byUser[userId] = {
-                                id: userId,
-                                name: tx.paidBy.name,
-                                amount: 0,
-                            };
-                        }
-                        dataMap[key].byUser[userId].amount += absAmount;
-                    }
-                }
-            }
-        } else {
-            for (let i = limitNumber - 1; i >= 0; i--) {
-                const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-                const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-                dataMap[key] = {
-                    year: d.getFullYear(),
-                    month: d.getMonth() + 1,
-                    income: 0,
-                    expense: 0,
-                    categories: {},
-                    byUser: {},
-                };
-            }
-
-            for (const tx of transactions) {
-                const txDate = new Date(tx.date);
-                const key = `${txDate.getFullYear()}-${String(txDate.getMonth() + 1).padStart(2, '0')}`;
-                if (dataMap[key]) {
-                    const amountNumber = typeof tx.amount.toNumber === 'function' ? tx.amount.toNumber() : Number(tx.amount);
-                    const absAmount = Math.abs(amountNumber);
-                    if (tx.type === 'INCOME') {
-                        dataMap[key].income += absAmount;
-                    } else if (tx.type === 'EXPENSE') {
-                        dataMap[key].expense += absAmount;
-
-                        const catId = tx.categoryId;
-                        if (!dataMap[key].categories[catId]) {
-                            dataMap[key].categories[catId] = {
-                                id: catId,
-                                name: tx.category.name,
-                                icon: tx.category.icon || 'category',
-                                color: tx.category.color || '#1A2D5A',
-                                amount: 0,
-                            };
-                        }
-                        dataMap[key].categories[catId].amount += absAmount;
-
-                        const userId = tx.paidById;
-                        if (!dataMap[key].byUser[userId]) {
-                            dataMap[key].byUser[userId] = {
-                                id: userId,
-                                name: tx.paidBy.name,
-                                amount: 0,
-                            };
-                        }
-                        dataMap[key].byUser[userId].amount += absAmount;
-                    }
-                }
-            }
-        }
-
-        // Calculate percentages and convert categories/users maps to sorted lists
-        for (const key of Object.keys(dataMap)) {
-            const interval = dataMap[key];
-            const totalExpense = interval.expense;
-            
-            // Categories
-            const categoryList: any[] = Object.values(interval.categories);
-            for (const cat of categoryList) {
-                cat.percentage = totalExpense > 0 ? cat.amount / totalExpense : 0;
-            }
-            categoryList.sort((a, b) => b.amount - a.amount);
-            interval.categories = categoryList;
-
-            // Users
-            const userList: any[] = Object.values(interval.byUser);
-            for (const u of userList) {
-                u.percentage = totalExpense > 0 ? u.amount / totalExpense : 0;
-            }
-            userList.sort((a, b) => b.amount - a.amount);
-            interval.byUser = userList;
-        }
-
-        return Object.values(dataMap);
+        return deletedCategory;
     }
 }

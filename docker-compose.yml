@@ -26,6 +26,15 @@ services:
         depends_on:
             - service-transactions # Agora ele espera o banco novo subir
 
+    # Mensageria para Sincronização e Comunicação Assíncrona (RabbitMQ)
+    rabbitmq:
+        image: rabbitmq:3-management-alpine
+        container_name: finance_rabbitmq
+        restart: always
+        ports:
+            - "5672:5672"
+            - "15672:15672"
+
 volumes:
     # Volume renomeado para não dar conflito com bancos antigos
     service_transactions_pgdata:

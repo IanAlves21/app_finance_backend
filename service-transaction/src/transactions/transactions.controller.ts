@@ -53,25 +53,6 @@ export class TransactionsController {
         return this.transactionsService.getSummary(userId, userEmail, userName, startDate, endDate);
     }
 
-    @Get('monthly-spending')
-    getMonthlySpending(
-        @Headers() headers: Record<string, string>,
-        @Query('limit') limit?: string,
-        @Query('timeframe') timeframe?: string,
-    ) {
-        const userId = headers['x-user-id'];
-        const userEmail = headers['x-user-email'];
-        const userName = headers['x-user-name'];
-        const limitNumber = limit ? parseInt(limit, 10) : 6;
-        return this.transactionsService.getMonthlySpending(
-            userId,
-            userEmail,
-            userName,
-            limitNumber,
-            timeframe || 'MONTHLY',
-        );
-    }
-
     @Get('categories')
     findAllCategories(@Headers() headers: Record<string, string>) {
         const userId = headers['x-user-id'];
