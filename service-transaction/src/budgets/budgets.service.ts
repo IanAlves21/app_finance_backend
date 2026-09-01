@@ -24,12 +24,10 @@ export class BudgetsService {
 
             if (user) return user;
 
-            let family = await this.prisma.familyGroup.findFirst();
-            if (!family) {
-                family = await this.prisma.familyGroup.create({
-                    data: { name: `${decodedName} & Família` },
-                });
-            }
+            // Cria um FamilyGroup exclusivo e isolado para este novo usuário
+            const family = await this.prisma.familyGroup.create({
+                data: { name: `${decodedName} & Família` },
+            });
 
             user = await this.prisma.user.create({
                 data: {

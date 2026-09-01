@@ -96,13 +96,10 @@ export class TransactionsService {
                 return user;
             }
 
-            // 2. Garante que exista ao menos um FamilyGroup
-            let family = await this.prisma.familyGroup.findFirst();
-            if (!family) {
-                family = await this.prisma.familyGroup.create({
-                    data: { name: `${decodedName} & Família` },
-                });
-            }
+            // 2. Cria um FamilyGroup exclusivo e isolado para este novo usuário
+            const family = await this.prisma.familyGroup.create({
+                data: { name: `${decodedName} & Família` },
+            });
 
             // 3. Cria o usuário no banco de transações para manter a integridade referencial
             user = await this.prisma.user.create({
@@ -172,9 +169,10 @@ export class TransactionsService {
             }
         }
 
-        const installments = createTransactionDto.installments && createTransactionDto.installments > 1
-            ? createTransactionDto.installments
-            : 1;
+        const installments =
+            createTransactionDto.installments && createTransactionDto.installments > 1
+                ? createTransactionDto.installments
+                : 1;
 
         if (createTransactionDto.paymentMethod === 'CREDIT' && installments > 1) {
             const createdTransactions: any[] = [];

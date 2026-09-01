@@ -38,6 +38,7 @@ export class AnalyticsController {
         const userId = headers['x-user-id'];
         const userEmail = headers['x-user-email'];
         const userName = headers['x-user-name'];
+        const acceptLanguage = headers['accept-language'];
 
         try {
             const pdfBuffer = await this.analyticsService.generateReportPdf(
@@ -46,6 +47,7 @@ export class AnalyticsController {
                 userId,
                 userEmail,
                 userName,
+                acceptLanguage,
             );
 
             res.set({

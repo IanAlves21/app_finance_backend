@@ -59,12 +59,10 @@ export class AnalyticsService {
                 return user;
             }
 
-            let family = await this.prisma.familyGroup.findFirst();
-            if (!family) {
-                family = await this.prisma.familyGroup.create({
-                    data: { name: `${decodedName} & Família` },
-                });
-            }
+            // Cria um FamilyGroup exclusivo e isolado para este novo usuário
+            const family = await this.prisma.familyGroup.create({
+                data: { name: `${decodedName} & Família` },
+            });
 
             user = await this.prisma.user.create({
                 data: {
@@ -375,6 +373,7 @@ export class AnalyticsService {
         userId?: string,
         userEmail?: string,
         userName?: string,
+        acceptLanguage?: string,
     ): Promise<Buffer> {
         const decodedUserName = userName ? decodeURIComponent(userName) : undefined;
         const whereClause: Record<string, any> = {};
@@ -532,14 +531,17 @@ export class AnalyticsService {
                 .replace(/\d(?=(\d{3})+,)/g, '$&.')}`;
         };
 
-        let templatePath = path.join(__dirname, 'report.html');
+        const isEnglish = acceptLanguage?.toLowerCase().includes('en') || false;
+        const templateFileName = isEnglish ? 'report_en.html' : 'report.html';
+
+        let templatePath = path.join(__dirname, templateFileName);
         if (!fs.existsSync(templatePath)) {
             // Fallback for compiled NestJS root mismatch (dist/src/analytics vs dist/analytics)
-            templatePath = path.join(__dirname, '../../analytics/report.html');
+            templatePath = path.join(__dirname, `../../analytics/${templateFileName}`);
         }
         if (!fs.existsSync(templatePath)) {
             // Ultimate fallback to source path
-            templatePath = path.join(__dirname, '../../../src/analytics/report.html');
+            templatePath = path.join(__dirname, `../../../src/analytics/${templateFileName}`);
         }
         let htmlContent = fs.readFileSync(templatePath, 'utf8');
 

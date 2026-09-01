@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Financial Statement</title>
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <style>
+        body { 
+            font-family: Helvetica, Arial, sans-serif; 
+            color: #333333; 
+            margin: 0; 
+            padding: 0; 
+        }
+        table { 
+            width: 100%; 
+            border-collapse: collapse; 
+            margin-bottom: 30px;
+        }
+        th, td { 
+            padding: 12px 15px; 
+            border-bottom: 1px solid #e2e8f0; 
+            text-align: left;
+            font-size: 14px;
+        }
+        th { 
+            background-color: #f8fafc; 
+            font-weight: 600; 
+            color: #475569; 
+            text-transform: uppercase;
+            font-size: 12px;
+        }
+        .footer { 
+            margin-top: 50px; 
+            text-align: center; 
+            color: #94a3b8; 
+            font-size: 11px; 
+            border-top: 1px solid #e2e8f0; 
+            padding-top: 20px; 
+        }
+    </style>
+</head>
+<body>
+    <div class="a4-container" style="padding: 10px;">
+        <!-- Header -->
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 5px;">
+            <tr>
+                <td style="width: 50%; vertical-align: middle; border: none; padding: 0; text-align: left;">
+                    <div style="font-size: 28px; font-weight: bold; color: #0f172a; letter-spacing: -1px; font-family: Helvetica, Arial, sans-serif; line-height: 1.1;">FinanceApp</div>
+                    <div style="font-size: 11px; color: #64748b; text-transform: uppercase; font-weight: bold; letter-spacing: 1px; margin-top: 5px;">Transaction Statement</div>
+                </td>
+                <td style="width: 50%; text-align: right; vertical-align: middle; border: none; padding: 0; font-size: 12px; line-height: 1.6; color: #475569;">
+                    <span style="font-weight: bold; color: #0f172a;">Holder:</span> {{userName}}<br>
+                    <span style="font-weight: bold; color: #0f172a;">Period:</span> {{startDate}} to {{endDate}}<br>
+                    <span style="font-weight: bold; color: #0f172a;">Issued:</span> {{emissaoDate}} at {{emissaoTime}}
+                </td>
+            </tr>
+        </table>
+
+        <!-- Header line divider -->
+        <table style="width: 100%; border-collapse: collapse; margin-top: 15px; margin-bottom: 30px;">
+            <tr>
+                <td style="border-top: 3px solid #0f172a; padding: 0; line-height: 1px; font-size: 1px;">&nbsp;</td>
+            </tr>
+        </table>
+
+        <!-- Dashboard / Summary -->
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 40px;">
+            <tr>
+                <!-- Total Income Card -->
+                <td style="width: 33.3%; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; text-align: center; vertical-align: middle;">
+                    <div style="font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; font-weight: bold; margin-bottom: 10px;">Total Income</div>
+                    <div style="font-size: 24px; font-weight: bold; color: #10b981;">+ {{totalIncome}}</div>
+                </td>
+                <!-- Spacer -->
+                <td style="width: 2%; border: none; padding: 0;">&nbsp;</td>
+                <!-- Total Expenses Card -->
+                <td style="width: 33.3%; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; text-align: center; vertical-align: middle;">
+                    <div style="font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; font-weight: bold; margin-bottom: 10px;">Total Expenses</div>
+                    <div style="font-size: 24px; font-weight: bold; color: #ef4444;">- {{totalExpense}}</div>
+                </td>
+                <!-- Spacer -->
+                <td style="width: 2%; border: none; padding: 0;">&nbsp;</td>
+                <!-- Statement Balance Card -->
+                <td style="width: 33.3%; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; text-align: center; vertical-align: middle;">
+                    <div style="font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; font-weight: bold; margin-bottom: 10px;">Statement Balance</div>
+                    <div style="font-size: 24px; font-weight: bold; color: #0f172a;">{{netSavings}}</div>
+                </td>
+            </tr>
+        </table>
+
+        <!-- Extra Analytical Sections -->
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 40px;">
+            <tr>
+                <!-- Category Division -->
+                <td style="width: 58%; vertical-align: top; border: none; padding: 0 15px 0 0;">
+                    <h2 style="font-size: 16px; font-weight: bold; color: #0f172a; margin-top: 0; margin-bottom: 15px; text-transform: uppercase; letter-spacing: -0.5px;">Expenses by Category</h2>
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr>
+                                <th>Category</th>
+                                <th style="text-align: right;">Spent</th>
+                                <th style="text-align: right;">Limit / %</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{categoriesRows}}
+                        </tbody>
+                    </table>
+                </td>
+
+                <!-- Partner Division -->
+                <td style="width: 42%; vertical-align: top; border: none; padding: 0 0 0 10px;">
+                    <h2 style="font-size: 16px; font-weight: bold; color: #0f172a; margin-top: 0; margin-bottom: 15px; text-transform: uppercase; letter-spacing: -0.5px;">Division between Partners</h2>
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr>
+                                <th>Partner</th>
+                                <th style="text-align: right;">Total Spent</th>
+                                <th style="text-align: right;">% Division</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{usersRows}}
+                        </tbody>
+                    </table>
+                </td>
+            </tr>
+        </table>
+
+        <!-- Transaction History -->
+        <h2 style="font-size: 16px; font-weight: bold; color: #0f172a; margin-top: 0; margin-bottom: 15px; text-transform: uppercase; letter-spacing: -0.5px;">Transaction History</h2>
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px;">
+            <thead>
+                <tr>
+                    <th style="padding: 12px 15px; border-bottom: 2px solid #e2e8f0; font-weight: 600; color: #475569; text-transform: uppercase; font-size: 12px; width: 12%;">Date</th>
+                    <th style="padding: 12px 15px; border-bottom: 2px solid #e2e8f0; font-weight: 600; color: #475569; text-transform: uppercase; font-size: 12px; width: 35%;">Description</th>
+                    <th style="padding: 12px 15px; border-bottom: 2px solid #e2e8f0; font-weight: 600; color: #475569; text-transform: uppercase; font-size: 12px; width: 20%;">Category</th>
+                    <th style="padding: 12px 15px; border-bottom: 2px solid #e2e8f0; font-weight: 600; color: #475569; text-transform: uppercase; font-size: 12px; width: 15%;">Paid By</th>
+                    <th style="padding: 12px 15px; border-bottom: 2px solid #e2e8f0; font-weight: 600; color: #475569; text-transform: uppercase; font-size: 12px; text-align: right; width: 18%;">Value (R$)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{transactionsRows}}
+            </tbody>
+        </table>
+
+        <!-- Legal Footer -->
+        <div class="footer">
+            This is an automatically generated document by FinanceApp.<br>
+            It is for informational purposes only and has no legal fiscal value.<br>
+            Report ID: #FA-{{reportId}}
+        </div>
+    </div>
+</body>
+</html>

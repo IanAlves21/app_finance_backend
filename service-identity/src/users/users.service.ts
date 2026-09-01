@@ -42,4 +42,18 @@ export class UsersService {
     async findByEmail(email: string) {
         return this.prisma.user.findUnique({ where: { email } });
     }
+
+    async createFromGoogle(name: string, email: string) {
+        const randomPassword = await bcrypt.hash(
+            Math.random().toString(36),
+            10,
+        );
+        return this.prisma.user.create({
+            data: {
+                name,
+                email,
+                password: randomPassword,
+            },
+        });
+    }
 }

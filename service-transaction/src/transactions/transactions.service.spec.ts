@@ -136,7 +136,6 @@ describe('TransactionsService', () => {
             const mockUser = { id: userId, email: userEmail, name: userName, familyId: 'fam-new' };
 
             mockPrismaService.user.findUnique.mockResolvedValue(null);
-            mockPrismaService.familyGroup.findFirst.mockResolvedValue(null);
             mockPrismaService.familyGroup.create.mockResolvedValue(mockFamily);
             mockPrismaService.user.create.mockResolvedValue(mockUser);
             mockPrismaService.transaction.findMany.mockResolvedValue([]);
@@ -144,7 +143,6 @@ describe('TransactionsService', () => {
             await service.findAll(userId, userEmail, userName);
 
             expect(mockPrismaService.user.findUnique).toHaveBeenCalledWith({ where: { id: userId } });
-            expect(mockPrismaService.familyGroup.findFirst).toHaveBeenCalled();
             expect(mockPrismaService.familyGroup.create).toHaveBeenCalledWith({
                 data: { name: 'New User & Família' },
             });
@@ -240,7 +238,7 @@ describe('TransactionsService', () => {
                 amount: 150,
                 type: TransactionType.EXPENSE,
                 date: '2026-07-15',
-                paymentMethod: 'CREDIT' as any,
+                paymentMethod: 'CREDIT' as PaymentMethod,
             };
 
             mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
@@ -248,7 +246,7 @@ describe('TransactionsService', () => {
             mockPrismaService.wallet.findFirst.mockResolvedValue(mockWallet);
             mockPrismaService.transaction.create.mockResolvedValue({ id: 'tx-123', ...createDto });
 
-            const result = await service.create(createDto as any, userId, userEmail, userName);
+            const result = await service.create(createDto, userId, userEmail, userName);
 
             expect(mockPrismaService.transaction.create).toHaveBeenCalledWith({
                 data: {
