@@ -8,9 +8,11 @@ import { AppModule } from './app.module';
 // Carrega as variáveis de ambiente do arquivo .env
 dotenv.config();
 
-const JWT_SECRET =
-    process.env.JWT_SECRET ||
-    'uma_frase_muito_longa_e_dificil_de_adivinhar_123!@';
+const JWT_SECRET: string = process.env.JWT_SECRET || '';
+if (JWT_SECRET.trim() === '') {
+    console.error('❌ ERRO CRÍTICO DE SEGURANÇA: A variável de ambiente JWT_SECRET não está definida no Gateway!');
+    process.exit(1);
+}
 
 // Interface customizada para requisições autenticadas no Gateway
 interface AuthenticatedRequest extends Request {

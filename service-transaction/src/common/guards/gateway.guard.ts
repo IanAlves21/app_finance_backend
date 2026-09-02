@@ -11,7 +11,7 @@ export class GatewayGuard implements CanActivate {
         const signature = request.headers['x-gateway-signature'];
         const expectedSignature = this.configService.get<string>('API_GATEWAY_SECRET');
 
-        if (!signature || signature !== expectedSignature) {
+        if (!expectedSignature || expectedSignature.trim() === '' || !signature || signature !== expectedSignature) {
             throw new ForbiddenException(
                 'Acesso direto não permitido. Requisição deve passar pelo API Gateway legítimo.',
             );
