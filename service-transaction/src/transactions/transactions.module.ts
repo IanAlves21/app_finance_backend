@@ -13,7 +13,7 @@ import { TransactionsController } from './transactions.controller';
                     urls: [process.env.RABBITMQ_URL || 'amqp://localhost:5672'],
                     queue: 'analytics_queue',
                     queueOptions: {
-                        durable: false,
+                        durable: true,
                     },
                 },
             },

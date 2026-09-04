@@ -1,10 +1,12 @@
 import { Module } from '@nestjs/common';
 import { ClientsModule, Transport } from '@nestjs/microservices';
-import { BudgetsService } from './budgets.service';
-import { BudgetsController } from './budgets.controller';
+import { PrismaModule } from '../prisma/prisma.module';
+import { GroupsService } from './groups.service';
+import { GroupsController } from './groups.controller';
 
 @Module({
     imports: [
+        PrismaModule,
         ClientsModule.register([
             {
                 name: 'ANALYTICS_SERVICE',
@@ -19,7 +21,8 @@ import { BudgetsController } from './budgets.controller';
             },
         ]),
     ],
-    controllers: [BudgetsController],
-    providers: [BudgetsService],
+    controllers: [GroupsController],
+    providers: [GroupsService],
+    exports: [GroupsService],
 })
-export class BudgetsModule {}
+export class GroupsModule {}

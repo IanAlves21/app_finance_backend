@@ -42,6 +42,7 @@ model FamilyGroup {
   transactions Transaction[]
   categories   Category[]
   budgets      Budget[]
+  invites      Invite[]
 }
 
 // Os Usuários (Você, Mariana)
@@ -79,6 +80,7 @@ model Category {
   
   familyId     String?
   family       FamilyGroup?  @relation(fields: [familyId], references: [id])
+  createdById  String?
 
   transactions Transaction[]
   budgets      Budget[]
@@ -130,4 +132,14 @@ model Budget {
   updatedAt  DateTime    @updatedAt
 
   @@unique([categoryId, familyId, month, year])
+}
+
+// Convites para se juntar ao grupo familiar
+model Invite {
+  id        String      @id @default(uuid())
+  code      String      @unique // Código alfanumérico curto de 6 dígitos
+  familyId  String
+  family    FamilyGroup @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime    @default(now())
 }

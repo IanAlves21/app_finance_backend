@@ -4,6 +4,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { PrismaModule } from './prisma/prisma.module';
 import { TransactionsModule } from './transactions/transactions.module';
 import { BudgetsModule } from './budgets/budgets.module';
+import { GroupsModule } from './groups/groups.module';
 import { GatewayGuard } from './common/guards/gateway.guard';
 
 @Module({
@@ -13,6 +14,7 @@ import { GatewayGuard } from './common/guards/gateway.guard';
         PrismaModule,
         TransactionsModule,
         BudgetsModule,
+        GroupsModule,
     ],
     controllers: [],
     providers: [

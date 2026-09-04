@@ -452,6 +452,7 @@ export class TransactionsService {
                 icon: data.icon || 'category',
                 color: data.color || '#1A2D5A',
                 familyId: finalFamilyId,
+                createdById: userId || null,
             },
         });
 

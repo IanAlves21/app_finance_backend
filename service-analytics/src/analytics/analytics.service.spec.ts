@@ -173,7 +173,7 @@ describe('AnalyticsService', () => {
                 paidById: 'user-1',
                 walletId: 'wal-1',
                 familyId: 'fam-1',
-                category: { id: 'cat-1', name: 'Food', type: 'EXPENSE', icon: 'shopping-cart', color: '#222', familyId: null },
+                category: { id: 'cat-1', name: 'Food', type: 'EXPENSE', icon: 'shopping-cart', color: '#222', familyId: null, createdById: null },
                 paidBy: { id: 'user-1', email: 'test@example.com', name: 'User One', familyId: 'fam-1', avatarUrl: null },
                 wallet: { id: 'wal-1', name: 'Wallet', balance: 0 as any, familyId: 'fam-1' },
                 family: { id: 'fam-1', name: 'Family', createdAt: new Date() },
@@ -210,7 +210,7 @@ describe('AnalyticsService', () => {
 
     describe('syncCategory', () => {
         it('should upsert category successfully', async () => {
-            const mockCategory = { id: 'cat-1', name: 'Food', type: TransactionType.EXPENSE, icon: 'shopping', color: '#333', familyId: null };
+            const mockCategory = { id: 'cat-1', name: 'Food', type: TransactionType.EXPENSE, icon: 'shopping', color: '#333', familyId: null, createdById: null };
             mockPrismaService.category.upsert.mockResolvedValue(mockCategory);
 
             await service.syncCategory(mockCategory);

@@ -843,4 +843,80 @@ export class AnalyticsService {
                 return 'category';
         }
     }
+
+    async mergeFamilyLocal(oldFamilyId: string, targetFamilyId: string, userId: string) {
+        await this.prisma.$transaction([
+            this.prisma.category.updateMany({
+                where: { familyId: oldFamilyId },
+                data: { familyId: targetFamilyId },
+            }),
+            this.prisma.wallet.updateMany({
+                where: { familyId: oldFamilyId },
+                data: { familyId: targetFamilyId },
+            }),
+            this.prisma.budget.updateMany({
+                where: { familyId: oldFamilyId },
+                data: { familyId: targetFamilyId },
+            }),
+            this.prisma.transaction.updateMany({
+                where: { familyId: oldFamilyId },
+                data: { familyId: targetFamilyId },
+            }),
+            this.prisma.user.updateMany({
+                where: { id: userId },
+                data: { familyId: targetFamilyId },
+            }),
+        ]);
+
+        const remainingUsers = await this.prisma.user.count({
+            where: { familyId: oldFamilyId },
+        });
+
+        if (remainingUsers === 0) {
+            await this.prisma.familyGroup.delete({
+                where: { id: oldFamilyId },
+            }).catch(() => null);
+        }
+    }
+
+    async userLeftGroupLocal(
+        userId: string,
+        userName: string,
+        userEmail: string,
+        userAvatarUrl: string | null,
+        newFamilyId: string,
+        newFamilyName: string
+    ) {
+        await this.prisma.familyGroup.upsert({
+            where: { id: newFamilyId },
+            update: { name: newFamilyName },
+            create: { id: newFamilyId, name: newFamilyName },
+        });
+
+        await this.prisma.user.upsert({
+            where: { id: userId },
+            update: {
+                familyId: newFamilyId,
+            },
+            create: {
+                id: userId,
+                name: userName,
+                email: userEmail,
+                avatarUrl: userAvatarUrl,
+                familyId: newFamilyId,
+            },
+        });
+
+        // Atualiza todas as transações pagas por este usuário para o novo grupo familiar no banco de Analytics
+        await this.prisma.transaction.updateMany({
+            where: { paidById: userId },
+            data: { familyId: newFamilyId },
+        });
+
+        // Atualiza todas as categorias criadas por este usuário para o novo grupo familiar no banco de Analytics
+        await this.prisma.category.updateMany({
+            where: { createdById: userId },
+            data: { familyId: newFamilyId },
+        });
+    }
 }

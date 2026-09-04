@@ -117,4 +117,23 @@ export class AnalyticsController {
         console.log(`[Analytics Message Consumer] 📥 Recebeu: budget.deleted para id: ${data.id}`);
         await this.analyticsService.deleteBudgetLocal(data.id);
     }
+
+    @EventPattern('family.merged')
+    async handleFamilyMerged(@Payload() data: { oldFamilyId: string; targetFamilyId: string; userId: string }) {
+        console.log(`[Analytics Message Consumer] 📥 Recebeu: family.merged para userId: ${data.userId}`);
+        await this.analyticsService.mergeFamilyLocal(data.oldFamilyId, data.targetFamilyId, data.userId);
+    }
+
+    @EventPattern('user.left_group')
+    async handleUserLeftGroup(@Payload() data: { userId: string; userName: string; userEmail: string; userAvatarUrl: string | null; newFamilyId: string; newFamilyName: string }) {
+        console.log(`[Analytics Message Consumer] 📥 Recebeu: user.left_group para userId: ${data.userId}`);
+        await this.analyticsService.userLeftGroupLocal(
+            data.userId,
+            data.userName,
+            data.userEmail,
+            data.userAvatarUrl,
+            data.newFamilyId,
+            data.newFamilyName
+        );
+    }
 }
