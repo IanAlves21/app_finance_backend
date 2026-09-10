@@ -81,7 +81,9 @@
             "!**/main.ts",
             "!**/*.module.ts",
             "!**/prisma/**",
-            "!**/common/guards/**"
+            "!**/common/guards/**",
+            "!**/*.entity.ts",
+            "!**/*.dto.ts"
         ],
         "coverageDirectory": "../coverage",
         "testEnvironment": "node"

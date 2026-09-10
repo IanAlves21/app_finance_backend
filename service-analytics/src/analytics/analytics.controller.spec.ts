@@ -26,6 +26,11 @@ describe('AnalyticsController', () => {
         handleTransactionCreatedOrUpdated: jest.fn(),
         handleTransactionDeleted: jest.fn(),
         syncCategory: jest.fn(),
+        deleteCategoryLocal: jest.fn(),
+        syncBudget: jest.fn(),
+        deleteBudgetLocal: jest.fn(),
+        mergeFamilyLocal: jest.fn(),
+        userLeftGroupLocal: jest.fn(),
     };
 
     beforeEach(async () => {
@@ -150,6 +155,36 @@ describe('AnalyticsController', () => {
             const data: any = { id: 'cat-1' };
             await controller.handleCategoryUpdated(data);
             expect(mockAnalyticsService.syncCategory).toHaveBeenCalledWith(data);
+        });
+
+        it('handleCategoryDeleted should call service', async () => {
+            const data = { id: 'cat-1' };
+            await controller.handleCategoryDeleted(data);
+            expect(mockAnalyticsService.deleteCategoryLocal).toHaveBeenCalledWith('cat-1');
+        });
+
+        it('handleBudgetUpserted should call service', async () => {
+            const data: any = { id: 'b-1' };
+            await controller.handleBudgetUpserted(data);
+            expect(mockAnalyticsService.syncBudget).toHaveBeenCalledWith(data);
+        });
+
+        it('handleBudgetDeleted should call service', async () => {
+            const data = { id: 'b-1' };
+            await controller.handleBudgetDeleted(data);
+            expect(mockAnalyticsService.deleteBudgetLocal).toHaveBeenCalledWith('b-1');
+        });
+
+        it('handleFamilyMerged should call service', async () => {
+            const data = { oldFamilyId: 'fam-old', targetFamilyId: 'fam-new', userId: 'u-1' };
+            await controller.handleFamilyMerged(data);
+            expect(mockAnalyticsService.mergeFamilyLocal).toHaveBeenCalledWith('fam-old', 'fam-new', 'u-1');
+        });
+
+        it('handleUserLeftGroup should call service', async () => {
+            const data = { userId: 'u-1', userName: 'User', userEmail: 'u@test.com', userAvatarUrl: 'url', newFamilyId: 'fam-new', newFamilyName: 'Fam' };
+            await controller.handleUserLeftGroup(data);
+            expect(mockAnalyticsService.userLeftGroupLocal).toHaveBeenCalledWith('u-1', 'User', 'u@test.com', 'url', 'fam-new', 'Fam');
         });
     });
 });

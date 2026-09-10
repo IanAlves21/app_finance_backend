@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { TransactionsService, parseSafeDate } from './transactions.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { TransactionType } from '@prisma/client';
+import { TransactionType, PaymentMethod } from '@prisma/client';
 
 describe('TransactionsService', () => {
     let service: TransactionsService;
@@ -12,6 +12,7 @@ describe('TransactionsService', () => {
             findUnique: jest.fn(),
             create: jest.fn(),
             delete: jest.fn(),
+            count: jest.fn(),
         },
         user: {
             findUnique: jest.fn(),
@@ -24,10 +25,16 @@ describe('TransactionsService', () => {
         category: {
             findFirst: jest.fn(),
             create: jest.fn(),
+            findMany: jest.fn(),
+            findUnique: jest.fn(),
+            update: jest.fn(),
+            delete: jest.fn(),
         },
         wallet: {
             findFirst: jest.fn(),
             create: jest.fn(),
+            findMany: jest.fn(),
+            findUnique: jest.fn(),
         },
     };
 
@@ -269,6 +276,35 @@ describe('TransactionsService', () => {
             });
             expect(result).toBeDefined();
         });
+
+        it('should create multiple installment transactions when paymentMethod is CREDIT and installments > 1', async () => {
+            const userId = 'user-123';
+            const userEmail = 'user@test.com';
+            const userName = 'User One';
+            const mockUser = { id: userId, email: userEmail, name: userName, familyId: 'fam-123' };
+            const mockCategory = { id: 'cat-123', type: TransactionType.EXPENSE };
+            const mockWallet = { id: 'wal-123', familyId: 'fam-123' };
+            const createDto = {
+                description: 'Notebook',
+                amount: 300,
+                type: TransactionType.EXPENSE,
+                date: '2026-07-15',
+                paymentMethod: 'CREDIT' as PaymentMethod,
+                installments: 3,
+            };
+
+            mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+            mockPrismaService.category.findFirst.mockResolvedValue(mockCategory);
+            mockPrismaService.wallet.findFirst.mockResolvedValue(mockWallet);
+            mockPrismaService.transaction.create.mockImplementation((args) => Promise.resolve({ id: 'tx-installment', ...args.data }));
+
+            const result = await service.create(createDto, userId, userEmail, userName);
+
+            expect(mockPrismaService.transaction.create).toHaveBeenCalledTimes(3);
+            expect(result).toBeDefined();
+            expect(result.description).toContain('(1/3)');
+            expect(result.amount).toEqual(100);
+        });
     });
 
     describe('update', () => {
@@ -407,6 +443,81 @@ describe('TransactionsService', () => {
             expect(parseSafeDate('')).toBeNull();
             expect(parseSafeDate(null)).toBeNull();
             expect(parseSafeDate(undefined)).toBeNull();
+        });
+    });
+
+    describe('Category CRUD Operations', () => {
+        const userId = 'user-123';
+        const userEmail = 'user@test.com';
+        const userName = 'User One';
+        const mockUser = { id: userId, email: userEmail, name: userName, familyId: 'fam-123' };
+
+        describe('findAllCategories', () => {
+            it('should return all categories including system-default and family-specific ones', async () => {
+                mockPrismaService.user.findUnique.mockResolvedValueOnce(mockUser);
+                mockPrismaService.category.findMany.mockResolvedValueOnce([
+                    { id: 'cat-sys', familyId: null, name: 'Default' },
+                    { id: 'cat-fam', familyId: 'fam-123', name: 'Custom' },
+                ]);
+
+                const result = await service.findAllCategories(userId, userEmail, userName);
+                expect(result).toHaveLength(2);
+                expect(mockPrismaService.category.findMany).toHaveBeenCalled();
+            });
+        });
+
+        describe('createCategory', () => {
+            it('should create custom category for user family group', async () => {
+                const categoryDto = { name: 'New Category', type: 'EXPENSE' as const, icon: 'icon', color: '#fff' };
+                mockPrismaService.user.findUnique.mockResolvedValueOnce(mockUser);
+                mockPrismaService.category.create.mockResolvedValueOnce({ id: 'cat-new', ...categoryDto, familyId: 'fam-123' });
+
+                const result = await service.createCategory(categoryDto, userId, userEmail, userName);
+                expect(result).toBeDefined();
+                expect(result.id).toEqual('cat-new');
+            });
+        });
+
+        describe('updateCategory', () => {
+            it('should throw ForbiddenException when attempting to update system-default category', async () => {
+                mockPrismaService.user.findUnique.mockResolvedValueOnce(mockUser);
+                mockPrismaService.category.findUnique.mockResolvedValueOnce({ id: 'cat-sys', familyId: null });
+
+                await expect(
+                    service.updateCategory('cat-sys', { name: 'Name' }, userId, userEmail, userName),
+                ).rejects.toThrow();
+            });
+
+            it('should update user-created custom category successfully', async () => {
+                mockPrismaService.user.findUnique.mockResolvedValueOnce(mockUser);
+                mockPrismaService.category.findUnique.mockResolvedValueOnce({ id: 'cat-fam', familyId: 'fam-123' });
+                mockPrismaService.category.update.mockResolvedValueOnce({ id: 'cat-fam', name: 'Updated name' });
+
+                const result = await service.updateCategory('cat-fam', { name: 'Updated name' }, userId, userEmail, userName);
+                expect(result.name).toEqual('Updated name');
+            });
+        });
+
+        describe('deleteCategory', () => {
+            it('should throw BadRequestException if category has associated transactions', async () => {
+                mockPrismaService.user.findUnique.mockResolvedValueOnce(mockUser);
+                mockPrismaService.category.findUnique.mockResolvedValueOnce({ id: 'cat-fam', familyId: 'fam-123' });
+                mockPrismaService.transaction.count.mockResolvedValueOnce(5); // 5 associated transactions
+
+                await expect(
+                    service.deleteCategory('cat-fam', userId, userEmail, userName),
+                ).rejects.toThrow();
+            });
+
+            it('should delete custom category successfully if no transactions are associated', async () => {
+                mockPrismaService.user.findUnique.mockResolvedValueOnce(mockUser);
+                mockPrismaService.category.findUnique.mockResolvedValueOnce({ id: 'cat-fam', familyId: 'fam-123' });
+                mockPrismaService.transaction.count.mockResolvedValueOnce(0); // 0 associated transactions
+                mockPrismaService.category.delete.mockResolvedValueOnce({ id: 'cat-fam' });
+
+                const result = await service.deleteCategory('cat-fam', userId, userEmail, userName);
+                expect(result.id).toEqual('cat-fam');
+            });
         });
     });
 });

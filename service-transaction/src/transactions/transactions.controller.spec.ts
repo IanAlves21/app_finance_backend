@@ -97,5 +97,22 @@ describe('TransactionsController', () => {
             await controller.remove('tx-1', validHeaders);
             expect(mockTransactionsService.remove).toHaveBeenCalledWith('tx-1', 'u-1', 'test@test.com', 'User%20One');
         });
+
+        it('createCategory should validate headers and delegate to service', async () => {
+            const body = { name: 'Aluguel', type: 'EXPENSE' as const };
+            await controller.createCategory(body, validHeaders);
+            expect(mockTransactionsService.createCategory).toHaveBeenCalledWith(body, 'u-1', 'test@test.com', 'User%20One');
+        });
+
+        it('updateCategory should validate headers and delegate to service', async () => {
+            const body = { name: 'Aluguel Novo' };
+            await controller.updateCategory('cat-1', body, validHeaders);
+            expect(mockTransactionsService.updateCategory).toHaveBeenCalledWith('cat-1', body, 'u-1', 'test@test.com', 'User%20One');
+        });
+
+        it('deleteCategory should validate headers and delegate to service', async () => {
+            await controller.deleteCategory('cat-1', validHeaders);
+            expect(mockTransactionsService.deleteCategory).toHaveBeenCalledWith('cat-1', 'u-1', 'test@test.com', 'User%20One');
+        });
     });
 });

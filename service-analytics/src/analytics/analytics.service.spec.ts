@@ -24,11 +24,14 @@ describe('AnalyticsService', () => {
             findUnique: jest.fn(),
             create: jest.fn(),
             upsert: jest.fn(),
+            updateMany: jest.fn(),
+            count: jest.fn(),
         },
         familyGroup: {
             findFirst: jest.fn(),
             create: jest.fn(),
             upsert: jest.fn(),
+            delete: jest.fn().mockImplementation(() => Promise.resolve({})),
         },
         transaction: {
             findMany: jest.fn(),
@@ -37,6 +40,7 @@ describe('AnalyticsService', () => {
             update: jest.fn(),
             delete: jest.fn(),
             upsert: jest.fn(),
+            updateMany: jest.fn(),
         },
         category: {
             findMany: jest.fn(),
@@ -45,15 +49,24 @@ describe('AnalyticsService', () => {
             update: jest.fn(),
             delete: jest.fn(),
             upsert: jest.fn(),
+            updateMany: jest.fn(),
         },
         budget: {
             findMany: jest.fn(),
             upsert: jest.fn(),
             delete: jest.fn(),
+            updateMany: jest.fn(),
         },
         wallet: {
             upsert: jest.fn(),
+            updateMany: jest.fn(),
         },
+        $transaction: jest.fn().mockImplementation(async (arg) => {
+            if (typeof arg === 'function') {
+                return await arg(mockPrismaService);
+            }
+            return arg;
+        }),
     };
 
     beforeEach(async () => {
@@ -82,7 +95,7 @@ describe('AnalyticsService', () => {
                     id: 'tx-1',
                     amount: 500,
                     type: 'INCOME',
-                    date: new Date(),
+                    date: new Date(new Date().getTime() + 24 * 60 * 60 * 1000), // Amanhã (futuro!)
                     categoryId: 'cat-income',
                     paidById: userId,
                     category: { id: 'cat-income', name: 'Salary', icon: 'briefcase', color: '#111' },
@@ -279,6 +292,26 @@ describe('AnalyticsService', () => {
             expect(result).toBeDefined();
             expect(result).toBeInstanceOf(Buffer);
         });
+
+        it('should generate PDF using first familyGroup fallback if credentials are not provided', async () => {
+            const mockTransactions: any[] = [];
+            mockPrismaService.familyGroup.findFirst.mockResolvedValueOnce({ id: 'fam-sys' });
+            mockPrismaService.transaction.findMany.mockResolvedValueOnce(mockTransactions);
+            mockPrismaService.budget.findMany.mockResolvedValueOnce([]);
+
+            const result = await service.generateReportPdf(
+                '2026-07-01',
+                '2026-07-31',
+                undefined,
+                undefined,
+                'Anonymous',
+                'en',
+            );
+
+            expect(result).toBeDefined();
+            expect(result).toBeInstanceOf(Buffer);
+            expect(mockPrismaService.familyGroup.findFirst).toHaveBeenCalled();
+        });
     });
 
     describe('syncBudget', () => {
@@ -350,6 +383,224 @@ describe('AnalyticsService', () => {
         it('should return undefined if no wallet provided', async () => {
             const result = await service.syncWallet(null as any);
             expect(result).toBeUndefined();
+        });
+    });
+
+    describe('mergeFamilyLocal', () => {
+        it('should update relations and delete old family if no remaining users', async () => {
+            mockPrismaService.user.count.mockResolvedValueOnce(0); // no remaining users in old family
+
+            await service.mergeFamilyLocal('fam-old', 'fam-new', 'u-1');
+
+            expect(mockPrismaService.category.updateMany).toHaveBeenCalled();
+            expect(mockPrismaService.wallet.updateMany).toHaveBeenCalled();
+            expect(mockPrismaService.budget.updateMany).toHaveBeenCalled();
+            expect(mockPrismaService.transaction.updateMany).toHaveBeenCalled();
+            expect(mockPrismaService.user.updateMany).toHaveBeenCalledWith({
+                where: { id: 'u-1' },
+                data: { familyId: 'fam-new' },
+            });
+            expect(mockPrismaService.familyGroup.delete).toHaveBeenCalledWith({ where: { id: 'fam-old' } });
+        });
+    });
+
+    describe('userLeftGroupLocal', () => {
+        it('should upsert family group, upsert user and update their transactions and categories', async () => {
+            await service.userLeftGroupLocal('u-1', 'User', 'test@test.com', 'url', 'fam-new', 'Fam');
+
+            expect(mockPrismaService.familyGroup.upsert).toHaveBeenCalled();
+            expect(mockPrismaService.user.upsert).toHaveBeenCalled();
+            expect(mockPrismaService.transaction.updateMany).toHaveBeenCalledWith({
+                where: { paidById: 'u-1' },
+                data: { familyId: 'fam-new' },
+            });
+            expect(mockPrismaService.category.updateMany).toHaveBeenCalledWith({
+                where: { createdById: 'u-1' },
+                data: { familyId: 'fam-new' },
+            });
+        });
+    });
+
+    describe('getMaterialIconName', () => {
+        it('should correctly map all supported icon names to Material Icons', () => {
+            const iconsMap: Record<string, string> = {
+                'briefcase': 'savings',
+                'savings': 'savings',
+                'shopping-cart': 'shopping_cart',
+                'food': 'shopping_cart',
+                'restaurant': 'restaurant',
+                'dining': 'restaurant',
+                'directions-car': 'directions_car',
+                'transport': 'directions_car',
+                'money': 'monetization_on',
+                'monetization-on': 'monetization_on',
+                'subscriptions': 'subscriptions',
+                'streaming': 'subscriptions',
+                'home': 'home',
+                'rent': 'home',
+                'medical': 'medical_services',
+                'health': 'medical_services',
+                'school': 'school',
+                'education': 'school',
+                'pets': 'pets',
+                'pet': 'pets',
+                'unknown': 'category',
+                '': 'category',
+                null: 'category',
+            };
+
+            for (const [key, value] of Object.entries(iconsMap)) {
+                expect((service as any).getMaterialIconName(key === 'null' ? null : key)).toEqual(value);
+            }
+        });
+    });
+
+    describe('mergeFamilyLocal Error Paths', () => {
+        it('should handle deletion error gracefully with catch block', async () => {
+            mockPrismaService.user.count.mockResolvedValueOnce(0);
+            mockPrismaService.familyGroup.delete.mockRejectedValueOnce(new Error('Delete error'));
+
+            await expect(service.mergeFamilyLocal('fam-old', 'fam-new', 'u-1')).resolves.not.toThrow();
+        });
+    });
+
+    describe('deleteBudgetLocal Error Paths', () => {
+        it('should handle deletion error gracefully with catch block', async () => {
+            mockPrismaService.budget.delete.mockRejectedValueOnce(new Error('Delete error'));
+
+            await expect(service.deleteBudgetLocal('b-1')).resolves.toBeNull();
+        });
+    });
+
+    describe('deleteCategoryLocal Error Paths', () => {
+        it('should handle deletion error gracefully with catch block', async () => {
+            mockPrismaService.category.delete.mockRejectedValueOnce(new Error('Delete error'));
+
+            await expect(service.deleteCategoryLocal('cat-1')).resolves.toBeNull();
+        });
+    });
+
+    describe('getMonthlySpending Budget Resolution Paths', () => {
+        it('should resolve budget amounts in getMonthlySpending when budgets are defined', async () => {
+            const userId = 'user-1';
+            const userEmail = 'test@example.com';
+            const mockUser = { id: userId, email: userEmail, familyId: 'fam-1', name: 'Test' };
+            const mockTransactions = [
+                {
+                    id: 'tx-2',
+                    amount: -150,
+                    type: 'EXPENSE',
+                    date: new Date(),
+                    categoryId: 'cat-expense',
+                    paidById: userId,
+                    category: { id: 'cat-expense', name: 'Food', icon: 'shopping-cart', color: '#222' },
+                    paidBy: { name: 'Test' },
+                },
+            ];
+
+            const mockBudget = {
+                id: 'b-1',
+                amount: { toNumber: () => 500 } as any,
+                month: new Date().getMonth() + 1,
+                year: new Date().getFullYear(),
+                categoryId: 'cat-expense',
+                familyId: 'fam-1',
+            };
+
+            mockPrismaService.user.findUnique.mockResolvedValueOnce(mockUser);
+            mockPrismaService.transaction.findMany.mockResolvedValueOnce(mockTransactions);
+            mockPrismaService.budget.findMany.mockResolvedValueOnce([mockBudget]);
+
+            const result = await service.getMonthlySpending(userId, userEmail, 'Test');
+            expect(result).toBeDefined();
+
+            const intervalWithTx = result.find((item) => item.categories.some((cat) => cat.id === 'cat-expense'));
+            expect(intervalWithTx).toBeDefined();
+            const catObj = intervalWithTx!.categories.find((cat) => cat.id === 'cat-expense');
+            expect(catObj).toBeDefined();
+            expect(catObj!.budgetAmount).toEqual(500);
+        });
+
+        it('should resolve fallback budget amounts when exact match is missing', async () => {
+            const userId = 'user-1';
+            const userEmail = 'test@example.com';
+            const mockUser = { id: userId, email: userEmail, familyId: 'fam-1', name: 'Test' };
+            const mockTransactions = [
+                {
+                    id: 'tx-2',
+                    amount: -150,
+                    type: 'EXPENSE',
+                    date: new Date(),
+                    categoryId: 'cat-expense',
+                    paidById: userId,
+                    category: { id: 'cat-expense', name: 'Food', icon: 'shopping-cart', color: '#222' },
+                    paidBy: { name: 'Test' },
+                },
+            ];
+
+            const mockBudgetPrior = {
+                id: 'b-1',
+                amount: { toNumber: () => 400 } as any,
+                month: 5,
+                year: 2026,
+                categoryId: 'cat-expense',
+                familyId: 'fam-1',
+            };
+
+            mockPrismaService.user.findUnique.mockResolvedValueOnce(mockUser);
+            mockPrismaService.transaction.findMany.mockResolvedValueOnce(mockTransactions);
+            mockPrismaService.budget.findMany.mockResolvedValueOnce([mockBudgetPrior]);
+
+            const result = await service.getMonthlySpending(userId, userEmail, 'Test');
+            expect(result).toBeDefined();
+
+            const intervalWithTx = result.find((item) => item.categories.some((cat) => cat.id === 'cat-expense'));
+            expect(intervalWithTx).toBeDefined();
+            const catObj = intervalWithTx!.categories.find((cat) => cat.id === 'cat-expense');
+            expect(catObj).toBeDefined();
+            expect(catObj!.budgetAmount).toEqual(400);
+        });
+
+        it('should fall back to sortedBudgets global default if only future budgets exist', async () => {
+            const userId = 'user-1';
+            const userEmail = 'test@example.com';
+            const mockUser = { id: userId, email: userEmail, familyId: 'fam-1', name: 'Test' };
+            const mockTransactions = [
+                {
+                    id: 'tx-2',
+                    amount: -150,
+                    type: 'EXPENSE',
+                    // Data atual (ex: setembro 2026)
+                    date: new Date(),
+                    categoryId: 'cat-expense',
+                    paidById: userId,
+                    category: { id: 'cat-expense', name: 'Food', icon: 'shopping-cart', color: '#222' },
+                    paidBy: { name: 'Test' },
+                },
+            ];
+
+            // Orçamento apenas no futuro (ex: dezembro de 2029)
+            const mockBudgetFuture = {
+                id: 'b-1',
+                amount: { toNumber: () => 650 } as any,
+                month: 12,
+                year: 2029,
+                categoryId: 'cat-expense',
+                familyId: 'fam-1',
+            };
+
+            mockPrismaService.user.findUnique.mockResolvedValueOnce(mockUser);
+            mockPrismaService.transaction.findMany.mockResolvedValueOnce(mockTransactions);
+            mockPrismaService.budget.findMany.mockResolvedValueOnce([mockBudgetFuture]);
+
+            const result = await service.getMonthlySpending(userId, userEmail, 'Test');
+            expect(result).toBeDefined();
+
+            const intervalWithTx = result.find((item) => item.categories.some((cat) => cat.id === 'cat-expense'));
+            expect(intervalWithTx).toBeDefined();
+            const catObj = intervalWithTx!.categories.find((cat) => cat.id === 'cat-expense');
+            expect(catObj).toBeDefined();
+            expect(catObj!.budgetAmount).toEqual(650);
         });
     });
 });

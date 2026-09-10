@@ -228,6 +228,38 @@ async function bootstrap(): Promise<void> {
         }),
     );
 
+    // 7. Rota de Chat com IA (Protegida)
+    app.use(
+        '/chat',
+        authMiddleware as any,
+        createProxyMiddleware({
+            target: 'http://localhost:3000/chat', // Repomos o /chat no destino
+            changeOrigin: true,
+            logger: console,
+            on: {
+                proxyReq: (proxyReq, req: any) => {
+                    proxyReq.setHeader(
+                        'x-gateway-signature',
+                        process.env.API_GATEWAY_SECRET || '',
+                    );
+
+                    const authReq = req as AuthenticatedRequest;
+                    if (authReq.user) {
+                        proxyReq.setHeader('x-user-id', authReq.user.sub || '');
+                        proxyReq.setHeader(
+                            'x-user-email',
+                            authReq.user.email || '',
+                        );
+                        proxyReq.setHeader(
+                            'x-user-name',
+                            encodeURIComponent(authReq.user.name || ''),
+                        );
+                    }
+                },
+            },
+        }),
+    );
+
     await app.listen(8080, '0.0.0.0');
     console.log(`🚀 API Gateway rodando na porta 8080...`);
 }

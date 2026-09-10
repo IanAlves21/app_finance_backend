@@ -5,6 +5,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { TransactionsModule } from './transactions/transactions.module';
 import { BudgetsModule } from './budgets/budgets.module';
 import { GroupsModule } from './groups/groups.module';
+import { ChatModule } from './chat/chat.module';
 import { GatewayGuard } from './common/guards/gateway.guard';
 
 @Module({
@@ -15,6 +16,7 @@ import { GatewayGuard } from './common/guards/gateway.guard';
         TransactionsModule,
         BudgetsModule,
         GroupsModule,
+        ChatModule,
     ],
     controllers: [],
     providers: [
