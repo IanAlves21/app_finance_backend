@@ -189,39 +189,118 @@ export class GroupsService {
             };
         }
 
+        let walletMappings: Record<string, string> | null = null;
+        let categoryMappings: Record<string, string> | null = null;
+        let targetWallets: any[] = [];
+        let targetCategories: any[] = [];
+
         const remainingUsers = await this.prisma.user.count({
             where: { familyId: oldFamilyId, NOT: { id: userId } },
         });
 
         if (remainingUsers === 0) {
-            // Executa o merge em lote total (o usuário era o único membro do grupo antigo)
-            await this.prisma.$transaction([
-                // 1. Atualiza as categorias da família antiga para a nova
-                this.prisma.category.updateMany({
+            // Executa o merge em lote total usando transação interativa para evitar duplicidades de categorias/carteiras
+            await this.prisma.$transaction(async (tx) => {
+                // 1. Resolve Carteiras
+                const oldWallets = await tx.wallet.findMany({ where: { familyId: oldFamilyId } });
+                const walletMap = new Map<string, string>(); // oldWalletId -> targetWalletId
+
+                for (const w of oldWallets) {
+                    const targetWallet = await tx.wallet.findFirst({
+                        where: { familyId: targetFamilyId, name: w.name },
+                    });
+
+                    if (targetWallet) {
+                        walletMap.set(w.id, targetWallet.id);
+                        // Atualiza as transações que usavam essa carteira antiga
+                        await tx.transaction.updateMany({
+                            where: { familyId: oldFamilyId, walletId: w.id },
+                            data: { walletId: targetWallet.id },
+                        });
+                        // Deleta a carteira antiga duplicada
+                        await tx.wallet.delete({ where: { id: w.id } });
+                    } else {
+                        // Não existe duplicada, apenas move de família
+                        await tx.wallet.update({
+                            where: { id: w.id },
+                            data: { familyId: targetFamilyId },
+                        });
+                        walletMap.set(w.id, w.id);
+                    }
+                }
+
+                // 2. Resolve Categorias
+                const oldCategories = await tx.category.findMany({ where: { familyId: oldFamilyId } });
+                const categoryMap = new Map<string, string>(); // oldCategoryId -> targetCategoryId
+
+                for (const cat of oldCategories) {
+                    const targetCategory = await tx.category.findFirst({
+                        where: { familyId: targetFamilyId, name: cat.name, type: cat.type },
+                    });
+
+                    if (targetCategory) {
+                        categoryMap.set(cat.id, targetCategory.id);
+                        // Atualiza as transações que usavam essa categoria antiga
+                        await tx.transaction.updateMany({
+                            where: { familyId: oldFamilyId, categoryId: cat.id },
+                            data: { categoryId: targetCategory.id },
+                        });
+                        // Deleta a categoria antiga duplicada
+                        await tx.category.delete({ where: { id: cat.id } });
+                    } else {
+                        // Apenas move de família
+                        await tx.category.update({
+                            where: { id: cat.id },
+                            data: { familyId: targetFamilyId },
+                        });
+                        categoryMap.set(cat.id, cat.id);
+                    }
+                }
+
+                // 3. Resolve Budgets (para evitar conflito de chave única)
+                const oldBudgets = await tx.budget.findMany({ where: { familyId: oldFamilyId } });
+                for (const b of oldBudgets) {
+                    const mappedCategoryId = categoryMap.get(b.categoryId) || b.categoryId;
+
+                    const targetBudget = await tx.budget.findFirst({
+                        where: {
+                            familyId: targetFamilyId,
+                            categoryId: mappedCategoryId,
+                            month: b.month,
+                            year: b.year,
+                        },
+                    });
+
+                    if (targetBudget) {
+                        // Se já existe um orçamento, deleta o antigo
+                        await tx.budget.delete({ where: { id: b.id } });
+                    } else {
+                        // Move para o grupo familiar destino com o categoryId mapeado
+                        await tx.budget.update({
+                            where: { id: b.id },
+                            data: {
+                                familyId: targetFamilyId,
+                                categoryId: mappedCategoryId,
+                            },
+                        });
+                    }
+                }
+
+                // 4. Move as transações restantes da família antiga para a nova
+                await tx.transaction.updateMany({
                     where: { familyId: oldFamilyId },
                     data: { familyId: targetFamilyId },
-                }),
-                // 2. Atualiza as carteiras (wallets) da família antiga para a nova
-                this.prisma.wallet.updateMany({
-                    where: { familyId: oldFamilyId },
-                    data: { familyId: targetFamilyId },
-                }),
-                // 3. Atualiza os limites de orçamento (budgets)
-                this.prisma.budget.updateMany({
-                    where: { familyId: oldFamilyId },
-                    data: { familyId: targetFamilyId },
-                }),
-                // 4. Atualiza todas as transações vinculadas à família antiga
-                this.prisma.transaction.updateMany({
-                    where: { familyId: oldFamilyId },
-                    data: { familyId: targetFamilyId },
-                }),
+                });
+
                 // 5. Migra o usuário para a nova família
-                this.prisma.user.updateMany({
+                await tx.user.update({
                     where: { id: userId },
                     data: { familyId: targetFamilyId },
-                }),
-            ]);
+                });
+
+                walletMappings = Object.fromEntries(walletMap);
+                categoryMappings = Object.fromEntries(categoryMap);
+            });
 
             await this.prisma.familyGroup.delete({
                 where: { id: oldFamilyId },
@@ -326,6 +405,21 @@ export class GroupsService {
                     where: { id: userId },
                     data: { familyId: targetFamilyId },
                 });
+
+                walletMappings = Object.fromEntries(walletMap);
+                categoryMappings = Object.fromEntries(categoryMap);
+            });
+        }
+
+        if (walletMappings && categoryMappings) {
+            const targetWalletIds = Object.values(walletMappings) as string[];
+            const targetCategoryIds = Object.values(categoryMappings) as string[];
+
+            targetWallets = await this.prisma.wallet.findMany({
+                where: { id: { in: targetWalletIds } },
+            });
+            targetCategories = await this.prisma.category.findMany({
+                where: { id: { in: targetCategoryIds } },
             });
         }
 
@@ -334,6 +428,11 @@ export class GroupsService {
             oldFamilyId,
             targetFamilyId,
             userId,
+            isSelective: remainingUsers > 0,
+            walletMappings,
+            categoryMappings,
+            targetWallets,
+            targetCategories,
         });
 
         return {
@@ -368,6 +467,11 @@ export class GroupsService {
         const newFamily = await this.prisma.familyGroup.create({
             data: { name: `${decodedName} & Família` },
         });
+
+        let walletMappings: Record<string, string> | null = null;
+        let categoryMappings: Record<string, string> | null = null;
+        let newWallets: any[] = [];
+        let newCategories: any[] = [];
 
         await this.prisma.$transaction(async (tx) => {
             // 1. Encontra todas as transações pagas por este usuário no grupo antigo
@@ -467,7 +571,22 @@ export class GroupsService {
                 where: { id: userId },
                 data: { familyId: newFamily.id },
             });
+
+            walletMappings = Object.fromEntries(walletMap);
+            categoryMappings = Object.fromEntries(categoryMap);
         });
+
+        if (walletMappings && categoryMappings) {
+            const newWalletIds = Object.values(walletMappings) as string[];
+            const newCategoryIds = Object.values(categoryMappings) as string[];
+
+            newWallets = await this.prisma.wallet.findMany({
+                where: { id: { in: newWalletIds } },
+            });
+            newCategories = await this.prisma.category.findMany({
+                where: { id: { in: newCategoryIds } },
+            });
+        }
 
         // Envia mensagem assíncrona ao RabbitMQ para sincronizar o banco de Analytics!
         this.analyticsClient.emit('user.left_group', {
@@ -477,6 +596,10 @@ export class GroupsService {
             userAvatarUrl: dbUser.avatarUrl,
             newFamilyId: newFamily.id,
             newFamilyName: newFamily.name,
+            walletMappings,
+            categoryMappings,
+            newWallets,
+            newCategories,
         });
 
         return {

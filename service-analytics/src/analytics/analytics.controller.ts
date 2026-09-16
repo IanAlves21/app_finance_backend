@@ -119,21 +119,79 @@ export class AnalyticsController {
     }
 
     @EventPattern('family.merged')
-    async handleFamilyMerged(@Payload() data: { oldFamilyId: string; targetFamilyId: string; userId: string }) {
+    async handleFamilyMerged(
+        @Payload()
+        data: {
+            oldFamilyId: string;
+            targetFamilyId: string;
+            userId: string;
+            isSelective?: boolean;
+            walletMappings?: Record<string, string> | null;
+            categoryMappings?: Record<string, string> | null;
+            targetWallets?: any[] | null;
+            targetCategories?: any[] | null;
+        },
+    ) {
         console.log(`[Analytics Message Consumer] 📥 Recebeu: family.merged para userId: ${data.userId}`);
-        await this.analyticsService.mergeFamilyLocal(data.oldFamilyId, data.targetFamilyId, data.userId);
+        if (data.isSelective) {
+            await this.analyticsService.mergeFamilyLocal(
+                data.oldFamilyId,
+                data.targetFamilyId,
+                data.userId,
+                data.isSelective,
+                data.walletMappings,
+                data.categoryMappings,
+                data.targetWallets,
+                data.targetCategories,
+            );
+        } else {
+            await this.analyticsService.mergeFamilyLocal(
+                data.oldFamilyId,
+                data.targetFamilyId,
+                data.userId,
+            );
+        }
     }
 
     @EventPattern('user.left_group')
-    async handleUserLeftGroup(@Payload() data: { userId: string; userName: string; userEmail: string; userAvatarUrl: string | null; newFamilyId: string; newFamilyName: string }) {
+    async handleUserLeftGroup(
+        @Payload()
+        data: {
+            userId: string;
+            userName: string;
+            userEmail: string;
+            userAvatarUrl: string | null;
+            newFamilyId: string;
+            newFamilyName: string;
+            walletMappings?: Record<string, string> | null;
+            categoryMappings?: Record<string, string> | null;
+            newWallets?: any[] | null;
+            newCategories?: any[] | null;
+        },
+    ) {
         console.log(`[Analytics Message Consumer] 📥 Recebeu: user.left_group para userId: ${data.userId}`);
-        await this.analyticsService.userLeftGroupLocal(
-            data.userId,
-            data.userName,
-            data.userEmail,
-            data.userAvatarUrl,
-            data.newFamilyId,
-            data.newFamilyName
-        );
+        if (data.walletMappings || data.categoryMappings) {
+            await this.analyticsService.userLeftGroupLocal(
+                data.userId,
+                data.userName,
+                data.userEmail,
+                data.userAvatarUrl,
+                data.newFamilyId,
+                data.newFamilyName,
+                data.walletMappings,
+                data.categoryMappings,
+                data.newWallets,
+                data.newCategories,
+            );
+        } else {
+            await this.analyticsService.userLeftGroupLocal(
+                data.userId,
+                data.userName,
+                data.userEmail,
+                data.userAvatarUrl,
+                data.newFamilyId,
+                data.newFamilyName,
+            );
+        }
     }
 }

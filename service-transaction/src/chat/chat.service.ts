@@ -40,13 +40,16 @@ export class ChatService {
         return user;
     }
 
-    async processMessage(message: string, userId?: string, userEmail?: string, userName?: string) {
+    async processMessage(message: string, userId?: string, userEmail?: string, userName?: string, acceptLanguage?: string) {
         if (!userId || !userEmail) {
             throw new UnauthorizedException('Credenciais de usuário obrigatórias');
         }
 
         const dbUser = await this.getOrCreateUser(userId, userEmail, userName);
         const familyId = dbUser.familyId;
+
+        const isEnglish = acceptLanguage?.toLowerCase().includes('en') || false;
+        const defaultLanguage = isEnglish ? 'English' : 'Portuguese';
 
         // 1. Busca categorias da família + globais (onde familyId é null)
         const categories = await this.prisma.category.findMany({
@@ -65,6 +68,12 @@ export class ChatService {
         const apiKey = this.configService.get<string>('GEMINI_API_KEY');
 
         if (!apiKey || apiKey.trim() === '') {
+            if (isEnglish) {
+                return {
+                    isTransaction: false,
+                    reply: `Hello, ${dbUser.name}! I am very happy to talk to you. 😊\n\nCurrently, my intelligent AI brain is not active because the Gemini API key (GEMINI_API_KEY) has not been configured in the server's environment variables. To activate me, please configure the key on the server.`,
+                };
+            }
             return {
                 isTransaction: false,
                 reply: `Olá, ${dbUser.name}! Fico muito feliz em falar com você. 😊\n\nNo momento, meu cérebro inteligente de IA não está ativo porque a chave da API do Gemini (GEMINI_API_KEY) não foi configurada nas variáveis de ambiente do servidor. Para me ativar, por favor configure a chave no servidor.`,
@@ -85,10 +94,10 @@ Instruções para análise:
    - Extraia a descrição (description) - um nome limpo e direto para a transação.
    - Determine o tipo (type): 'EXPENSE' (despesa) ou 'INCOME' (receita).
    - Tente mapear o gasto para uma das categorias fornecidas. Se encontrar uma boa correspondência na lista, forneça o \`categoryId\` e o \`categoryName\` dela. Caso não encontre nenhuma categoria que se adeque bem, escolha o nome de uma categoria padrão razoável (como 'Alimentação', 'Transporte', 'Lazer', 'Saúde', 'Outros') e deixe \`categoryId\` como null.
-   - Gere uma resposta conversacional e simpática no campo \`reply\`, confirmando as informações que você extraiu (ex: 'Entendi! Registrei um gasto de R$ 45,00 em Alimentação. Confirma o lançamento abaixo?').
+   - Gere uma resposta conversacional e simpática no campo \`reply\` no mesmo idioma em que o usuário escreveu a mensagem (ou em ${defaultLanguage} por padrão), confirmando as informações que você extraiu (ex em pt-BR: 'Entendi! Registrei um gasto de R$ 45,00 em Alimentação. Confirma o lançamento abaixo?' ou em en-US: 'Got it! I recorded a $45.00 expense in Food. Confirm the entry below?').
 3. Se NÃO for uma transação (por exemplo, cumprimentos, dúvidas, conversas casuais):
    - Defina \`isTransaction\` como false.
-   - Gere uma resposta simpática e conversacional no campo \`reply\`, respondendo à dúvida ou cumprimento do usuário, e se oportuno lembrando-o de que ele pode registrar transações escrevendo algo como 'Gastei R$ 20 com Uber hoje'.
+   - Gere uma resposta simpática e conversacional no campo \`reply\` no mesmo idioma em que o usuário escreveu a mensagem (ou em ${defaultLanguage} por padrão), respondendo à dúvida ou cumprimento do usuário, e se oportuno lembrando-o de que ele pode registrar transações escrevendo algo como 'Gastei R$ 20 com Uber hoje' ou 'Spent $20 on Uber today'.
 
 A sua resposta deve seguir rigorosamente o esquema JSON fornecido.`;
 
@@ -148,7 +157,7 @@ A sua resposta deve seguir rigorosamente o esquema JSON fornecido.`;
                                 reply: {
                                     type: 'STRING',
                                     description:
-                                        'Resposta em texto conversacional, simpática e em português para exibir ao usuário.',
+                                        isEnglish ? 'Conversational, friendly text response in English or matching the user language to show to the user.' : 'Resposta em texto conversacional, simpática e em português para exibir ao usuário.',
                                 },
                             },
                             required: ['isTransaction', 'reply'],

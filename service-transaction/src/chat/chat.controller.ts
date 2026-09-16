@@ -21,6 +21,7 @@ export class ChatController {
     ) {
         const { userId, userEmail, userName } = this.validateAuthHeaders(headers);
         const userMessage = body?.message || '';
-        return this.chatService.processMessage(userMessage, userId, userEmail, userName);
+        const acceptLanguage = headers['accept-language'];
+        return this.chatService.processMessage(userMessage, userId, userEmail, userName, acceptLanguage);
     }
 }

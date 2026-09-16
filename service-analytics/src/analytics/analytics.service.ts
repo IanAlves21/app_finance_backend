@@ -844,38 +844,142 @@ export class AnalyticsService {
         }
     }
 
-    async mergeFamilyLocal(oldFamilyId: string, targetFamilyId: string, userId: string) {
-        await this.prisma.$transaction([
-            this.prisma.category.updateMany({
-                where: { familyId: oldFamilyId },
-                data: { familyId: targetFamilyId },
-            }),
-            this.prisma.wallet.updateMany({
-                where: { familyId: oldFamilyId },
-                data: { familyId: targetFamilyId },
-            }),
-            this.prisma.budget.updateMany({
-                where: { familyId: oldFamilyId },
-                data: { familyId: targetFamilyId },
-            }),
-            this.prisma.transaction.updateMany({
-                where: { familyId: oldFamilyId },
-                data: { familyId: targetFamilyId },
-            }),
-            this.prisma.user.updateMany({
+    async mergeFamilyLocal(
+        oldFamilyId: string,
+        targetFamilyId: string,
+        userId: string,
+        isSelective?: boolean,
+        walletMappings?: Record<string, string> | null,
+        categoryMappings?: Record<string, string> | null,
+        targetWallets?: any[] | null,
+        targetCategories?: any[] | null,
+    ) {
+        if (isSelective) {
+            // Garante que o FamilyGroup de destino existe no Analytics
+            const targetFamily = await this.prisma.familyGroup.findUnique({
+                where: { id: targetFamilyId },
+            });
+            if (!targetFamily) {
+                await this.prisma.familyGroup.create({
+                    data: {
+                        id: targetFamilyId,
+                        name: 'Grupo Familiar',
+                    },
+                });
+            }
+
+            if (targetWallets && targetWallets.length > 0) {
+                for (const wallet of targetWallets) {
+                    const balanceNum = wallet.balance && typeof wallet.balance.toNumber === 'function'
+                        ? wallet.balance.toNumber()
+                        : (wallet.balance ? Number(wallet.balance) : 0);
+
+                    await this.prisma.wallet.upsert({
+                        where: { id: wallet.id },
+                        update: {
+                            name: wallet.name,
+                            balance: balanceNum,
+                            familyId: wallet.familyId,
+                        },
+                        create: {
+                            id: wallet.id,
+                            name: wallet.name,
+                            balance: balanceNum,
+                            familyId: wallet.familyId,
+                        },
+                    });
+                }
+            }
+
+            if (targetCategories && targetCategories.length > 0) {
+                for (const cat of targetCategories) {
+                    await this.prisma.category.upsert({
+                        where: { id: cat.id },
+                        update: {
+                            name: cat.name,
+                            type: cat.type,
+                            icon: cat.icon,
+                            color: cat.color,
+                            familyId: cat.familyId,
+                            createdById: cat.createdById,
+                        },
+                        create: {
+                            id: cat.id,
+                            name: cat.name,
+                            type: cat.type,
+                            icon: cat.icon,
+                            color: cat.color,
+                            familyId: cat.familyId,
+                            createdById: cat.createdById,
+                        },
+                    });
+                }
+            }
+
+            await this.prisma.user.updateMany({
                 where: { id: userId },
                 data: { familyId: targetFamilyId },
-            }),
-        ]);
+            });
 
-        const remainingUsers = await this.prisma.user.count({
-            where: { familyId: oldFamilyId },
-        });
+            const userTransactions = await this.prisma.transaction.findMany({
+                where: { paidById: userId, familyId: oldFamilyId },
+            });
 
-        if (remainingUsers === 0) {
-            await this.prisma.familyGroup.delete({
-                where: { id: oldFamilyId },
-            }).catch(() => null);
+            for (const t of userTransactions) {
+                const targetWalletId = walletMappings ? walletMappings[t.walletId] : null;
+                const targetCategoryId = categoryMappings ? categoryMappings[t.categoryId] : null;
+
+                if (targetWalletId && targetCategoryId) {
+                    await this.prisma.transaction.update({
+                        where: { id: t.id },
+                        data: {
+                            familyId: targetFamilyId,
+                            walletId: targetWalletId,
+                            categoryId: targetCategoryId,
+                        },
+                    });
+                } else {
+                    await this.prisma.transaction.update({
+                        where: { id: t.id },
+                        data: {
+                            familyId: targetFamilyId,
+                        },
+                    });
+                }
+            }
+        } else {
+            await this.prisma.$transaction([
+                this.prisma.category.updateMany({
+                    where: { familyId: oldFamilyId },
+                    data: { familyId: targetFamilyId },
+                }),
+                this.prisma.wallet.updateMany({
+                    where: { familyId: oldFamilyId },
+                    data: { familyId: targetFamilyId },
+                }),
+                this.prisma.budget.updateMany({
+                    where: { familyId: oldFamilyId },
+                    data: { familyId: targetFamilyId },
+                }),
+                this.prisma.transaction.updateMany({
+                    where: { familyId: oldFamilyId },
+                    data: { familyId: targetFamilyId },
+                }),
+                this.prisma.user.updateMany({
+                    where: { id: userId },
+                    data: { familyId: targetFamilyId },
+                }),
+            ]);
+
+            const remainingUsers = await this.prisma.user.count({
+                where: { familyId: oldFamilyId },
+            });
+
+            if (remainingUsers === 0) {
+                await this.prisma.familyGroup.delete({
+                    where: { id: oldFamilyId },
+                }).catch(() => null);
+            }
         }
     }
 
@@ -885,13 +989,65 @@ export class AnalyticsService {
         userEmail: string,
         userAvatarUrl: string | null,
         newFamilyId: string,
-        newFamilyName: string
+        newFamilyName: string,
+        walletMappings?: Record<string, string> | null,
+        categoryMappings?: Record<string, string> | null,
+        newWallets?: any[] | null,
+        newCategories?: any[] | null,
     ) {
         await this.prisma.familyGroup.upsert({
             where: { id: newFamilyId },
             update: { name: newFamilyName },
             create: { id: newFamilyId, name: newFamilyName },
         });
+
+        if (newWallets && newWallets.length > 0) {
+            for (const wallet of newWallets) {
+                const balanceNum = wallet.balance && typeof wallet.balance.toNumber === 'function'
+                    ? wallet.balance.toNumber()
+                    : (wallet.balance ? Number(wallet.balance) : 0);
+
+                await this.prisma.wallet.upsert({
+                    where: { id: wallet.id },
+                    update: {
+                        name: wallet.name,
+                        balance: balanceNum,
+                        familyId: wallet.familyId,
+                    },
+                    create: {
+                        id: wallet.id,
+                        name: wallet.name,
+                        balance: balanceNum,
+                        familyId: wallet.familyId,
+                    },
+                });
+            }
+        }
+
+        if (newCategories && newCategories.length > 0) {
+            for (const cat of newCategories) {
+                await this.prisma.category.upsert({
+                    where: { id: cat.id },
+                    update: {
+                        name: cat.name,
+                        type: cat.type,
+                        icon: cat.icon,
+                        color: cat.color,
+                        familyId: cat.familyId,
+                        createdById: cat.createdById,
+                    },
+                    create: {
+                        id: cat.id,
+                        name: cat.name,
+                        type: cat.type,
+                        icon: cat.icon,
+                        color: cat.color,
+                        familyId: cat.familyId,
+                        createdById: cat.createdById,
+                    },
+                });
+            }
+        }
 
         await this.prisma.user.upsert({
             where: { id: userId },
@@ -907,16 +1063,47 @@ export class AnalyticsService {
             },
         });
 
-        // Atualiza todas as transações pagas por este usuário para o novo grupo familiar no banco de Analytics
-        await this.prisma.transaction.updateMany({
-            where: { paidById: userId },
-            data: { familyId: newFamilyId },
+        if (!walletMappings && !categoryMappings) {
+            // Atualiza todas as transações pagas por este usuário para o novo grupo familiar no banco de Analytics
+            await this.prisma.transaction.updateMany({
+                where: { paidById: userId },
+                data: { familyId: newFamilyId },
+            });
+
+            // Atualiza todas as categorias criadas por este usuário para o novo grupo familiar no banco de Analytics
+            await this.prisma.category.updateMany({
+                where: { createdById: userId },
+                data: { familyId: newFamilyId },
+            });
+            return;
+        }
+
+        // Encontra transações do usuário no grupo antigo (as que ele pagou)
+        const userTransactions = await this.prisma.transaction.findMany({
+            where: { paidById: userId, NOT: { familyId: newFamilyId } },
         });
 
-        // Atualiza todas as categorias criadas por este usuário para o novo grupo familiar no banco de Analytics
-        await this.prisma.category.updateMany({
-            where: { createdById: userId },
-            data: { familyId: newFamilyId },
-        });
+        for (const t of userTransactions) {
+            const targetWalletId = walletMappings ? walletMappings[t.walletId] : null;
+            const targetCategoryId = categoryMappings ? categoryMappings[t.categoryId] : null;
+
+            if (targetWalletId && targetCategoryId) {
+                await this.prisma.transaction.update({
+                    where: { id: t.id },
+                    data: {
+                        familyId: newFamilyId,
+                        walletId: targetWalletId,
+                        categoryId: targetCategoryId,
+                    },
+                });
+            } else {
+                await this.prisma.transaction.update({
+                    where: { id: t.id },
+                    data: {
+                        familyId: newFamilyId,
+                    },
+                });
+            }
+        }
     }
 }

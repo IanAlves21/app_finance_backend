@@ -31,17 +31,25 @@ describe('GroupsService', () => {
             findMany: jest.fn(),
             findFirst: jest.fn(),
             create: jest.fn(),
+            update: jest.fn(),
             updateMany: jest.fn(),
+            delete: jest.fn(),
         },
         wallet: {
             findUnique: jest.fn(),
             findMany: jest.fn(),
             findFirst: jest.fn(),
             create: jest.fn(),
+            update: jest.fn(),
             updateMany: jest.fn(),
+            delete: jest.fn(),
         },
         budget: {
+            findFirst: jest.fn(),
+            findMany: jest.fn(),
+            update: jest.fn(),
             updateMany: jest.fn(),
+            delete: jest.fn(),
         },
         transaction: {
             findMany: jest.fn(),
@@ -69,6 +77,48 @@ describe('GroupsService', () => {
         }).compile();
 
         service = module.get<GroupsService>(GroupsService);
+
+        // Reset individual mock queues to avoid test pollution
+        mockPrismaService.user.findUnique = jest.fn();
+        mockPrismaService.user.count = jest.fn();
+        mockPrismaService.user.create = jest.fn();
+        mockPrismaService.user.update = jest.fn();
+        mockPrismaService.user.updateMany = jest.fn();
+
+        mockPrismaService.familyGroup.create = jest.fn();
+        mockPrismaService.familyGroup.findUnique = jest.fn();
+        mockPrismaService.familyGroup.findFirst = jest.fn();
+
+        mockPrismaService.invite.findFirst = jest.fn();
+        mockPrismaService.invite.findUnique = jest.fn();
+        mockPrismaService.invite.create = jest.fn();
+
+        mockPrismaService.category.findUnique = jest.fn();
+        mockPrismaService.category.findMany = jest.fn();
+        mockPrismaService.category.findFirst = jest.fn();
+        mockPrismaService.category.create = jest.fn();
+        mockPrismaService.category.update = jest.fn();
+        mockPrismaService.category.updateMany = jest.fn();
+        mockPrismaService.category.delete = jest.fn();
+
+        mockPrismaService.wallet.findUnique = jest.fn();
+        mockPrismaService.wallet.findMany = jest.fn();
+        mockPrismaService.wallet.findFirst = jest.fn();
+        mockPrismaService.wallet.create = jest.fn();
+        mockPrismaService.wallet.update = jest.fn();
+        mockPrismaService.wallet.updateMany = jest.fn();
+        mockPrismaService.wallet.delete = jest.fn();
+
+        mockPrismaService.budget.findFirst = jest.fn();
+        mockPrismaService.budget.update = jest.fn();
+        mockPrismaService.budget.updateMany = jest.fn();
+        mockPrismaService.budget.delete = jest.fn();
+
+        mockPrismaService.transaction.findMany = jest.fn();
+        mockPrismaService.transaction.updateMany = jest.fn();
+
+        mockAnalyticsClient.emit = jest.fn();
+
         jest.clearAllMocks();
     });
 
@@ -241,11 +291,21 @@ describe('GroupsService', () => {
             });
             mockPrismaService.user.count.mockResolvedValueOnce(0); // 0 remaining users
 
+            // Mocks para resolver carteiras, categorias e budgets na transação interativa de lote total
+            mockPrismaService.wallet.findMany.mockResolvedValueOnce([{ id: 'w-1', name: 'Wallet 1' }]);
+            mockPrismaService.wallet.findFirst.mockResolvedValueOnce(null);
+            mockPrismaService.wallet.update.mockResolvedValueOnce({});
+
+            mockPrismaService.category.findMany.mockResolvedValueOnce([{ id: 'cat-1', name: 'Category 1', type: 'EXPENSE' }]);
+            mockPrismaService.category.findFirst.mockResolvedValueOnce(null);
+            mockPrismaService.category.update.mockResolvedValueOnce({});
+
+            mockPrismaService.budget.findMany.mockResolvedValueOnce([]);
+
             const result = await service.acceptInvite('CODE', 'u-1', 'test@test.com');
             expect(result.success).toBe(true);
-            expect(mockPrismaService.category.updateMany).toHaveBeenCalled();
-            expect(mockPrismaService.wallet.updateMany).toHaveBeenCalled();
-            expect(mockPrismaService.budget.updateMany).toHaveBeenCalled();
+            expect(mockPrismaService.wallet.update).toHaveBeenCalled();
+            expect(mockPrismaService.category.update).toHaveBeenCalled();
             expect(mockPrismaService.transaction.updateMany).toHaveBeenCalled();
             expect(mockPrismaService.familyGroup.delete).toHaveBeenCalledWith({ where: { id: 'fam-old' } });
             expect(mockAnalyticsClient.emit).toHaveBeenCalledWith('family.merged', expect.any(Object));
