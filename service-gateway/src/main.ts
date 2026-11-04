@@ -74,6 +74,13 @@ function authMiddleware(
 }
 
 async function bootstrap(): Promise<void> {
+    const IDENTITY_SERVICE_URL =
+        process.env.IDENTITY_SERVICE_URL || 'http://localhost:3001';
+    const TRANSACTION_SERVICE_URL =
+        process.env.TRANSACTION_SERVICE_URL || 'http://localhost:3000';
+    const ANALYTICS_SERVICE_URL =
+        process.env.ANALYTICS_SERVICE_URL || 'http://localhost:3003';
+
     // Desativamos o bodyParser para que o Gateway não interfira no JSON das requisições POST
     const app = await NestFactory.create(AppModule, { bodyParser: false });
 
@@ -92,7 +99,7 @@ async function bootstrap(): Promise<void> {
     app.use(
         '/auth',
         createProxyMiddleware({
-            target: 'http://localhost:3001/auth', // <--- O SEGREDO ESTÁ AQUI: repomos o /auth no destino!
+            target: `${IDENTITY_SERVICE_URL}/auth`,
             changeOrigin: true,
             logger: console, // Habilita os logs internos da própria biblioteca do proxy
         }),
@@ -103,7 +110,7 @@ async function bootstrap(): Promise<void> {
         '/transactions',
         authMiddleware as any, // Cast temporário para middleware Express padrão se necessário
         createProxyMiddleware({
-            target: 'http://localhost:3000/transactions', // Repomos o /transactions no destino
+            target: `${TRANSACTION_SERVICE_URL}/transactions`, // Repomos o /transactions no destino
             changeOrigin: true,
             logger: console,
             on: {
@@ -137,7 +144,7 @@ async function bootstrap(): Promise<void> {
         '/analytics',
         authMiddleware as any,
         createProxyMiddleware({
-            target: 'http://localhost:3003/analytics', // Repomos o /analytics no destino
+            target: `${ANALYTICS_SERVICE_URL}/analytics`, // Repomos o /analytics no destino
             changeOrigin: true,
             logger: console,
             on: {
@@ -169,7 +176,7 @@ async function bootstrap(): Promise<void> {
         '/budgets',
         authMiddleware as any,
         createProxyMiddleware({
-            target: 'http://localhost:3000/budgets', // Repomos o /budgets no destino
+            target: `${TRANSACTION_SERVICE_URL}/budgets`, // Repomos o /budgets no destino
             changeOrigin: true,
             logger: console,
             on: {
@@ -201,7 +208,7 @@ async function bootstrap(): Promise<void> {
         '/groups',
         authMiddleware as any,
         createProxyMiddleware({
-            target: 'http://localhost:3000/groups', // Repomos o /groups no destino
+            target: `${TRANSACTION_SERVICE_URL}/groups`, // Repomos o /groups no destino
             changeOrigin: true,
             logger: console,
             on: {
@@ -233,7 +240,7 @@ async function bootstrap(): Promise<void> {
         '/chat',
         authMiddleware as any,
         createProxyMiddleware({
-            target: 'http://localhost:3000/chat', // Repomos o /chat no destino
+            target: `${TRANSACTION_SERVICE_URL}/chat`, // Repomos o /chat no destino
             changeOrigin: true,
             logger: console,
             on: {
@@ -260,8 +267,9 @@ async function bootstrap(): Promise<void> {
         }),
     );
 
-    await app.listen(8080, '0.0.0.0');
-    console.log(`🚀 API Gateway rodando na porta 8080...`);
+    const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 8080;
+    await app.listen(port, '0.0.0.0');
+    console.log(`🚀 API Gateway rodando na porta ${port}...`);
 }
 
 bootstrap().catch((err: unknown) => {
