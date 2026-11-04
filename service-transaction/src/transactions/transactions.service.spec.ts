@@ -1,0 +1,523 @@
+import { Test, TestingModule } from '@nestjs/testing';
+import { TransactionsService, parseSafeDate } from './transactions.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { TransactionType, PaymentMethod } from '@prisma/client';
+
+describe('TransactionsService', () => {
+    let service: TransactionsService;
+
+    const mockPrismaService = {
+        transaction: {
+            findMany: jest.fn(),
+            findUnique: jest.fn(),
+            create: jest.fn(),
+            delete: jest.fn(),
+            count: jest.fn(),
+        },
+        user: {
+            findUnique: jest.fn(),
+            create: jest.fn(),
+        },
+        familyGroup: {
+            findFirst: jest.fn(),
+            create: jest.fn(),
+        },
+        category: {
+            findFirst: jest.fn(),
+            create: jest.fn(),
+            findMany: jest.fn(),
+            findUnique: jest.fn(),
+            update: jest.fn(),
+            delete: jest.fn(),
+        },
+        wallet: {
+            findFirst: jest.fn(),
+            create: jest.fn(),
+            findMany: jest.fn(),
+            findUnique: jest.fn(),
+        },
+    };
+
+    beforeEach(async () => {
+        const module: TestingModule = await Test.createTestingModule({
+            providers: [
+                TransactionsService,
+                { provide: PrismaService, useValue: mockPrismaService },
+                {
+                    provide: 'ANALYTICS_SERVICE',
+                    useValue: { emit: jest.fn() },
+                },
+            ],
+        }).compile();
+
+        service = module.get<TransactionsService>(TransactionsService);
+
+        // Limpa os mocks antes de cada teste
+        jest.clearAllMocks();
+    });
+
+    it('should be defined', () => {
+        expect(service).toBeDefined();
+    });
+
+    describe('findAll', () => {
+        it('should return all transactions when no userId is provided (fallback)', async () => {
+            const mockTransactions = [
+                { id: '1', description: 'T1', paidById: 'user-1' },
+                { id: '2', description: 'T2', paidById: 'user-2' },
+            ];
+            mockPrismaService.transaction.findMany.mockResolvedValue(mockTransactions);
+
+            const result = await service.findAll();
+
+            expect(mockPrismaService.transaction.findMany).toHaveBeenCalledWith({
+                where: {},
+                orderBy: { date: 'desc' },
+                skip: undefined,
+                take: undefined,
+                include: {
+                    category: true,
+                    wallet: true,
+                    paidBy: true,
+                },
+            });
+            expect(result).toEqual(mockTransactions);
+        });
+
+        it('should return family-wide transactions when userId and userEmail are provided', async () => {
+            const userId = 'user-123';
+            const userEmail = 'user@test.com';
+            const userName = 'User One';
+            const mockUser = { id: userId, email: userEmail, name: userName, familyId: 'fam-123' };
+            const mockTransactions = [{ id: '1', description: 'T1', paidById: userId }];
+
+            mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+            mockPrismaService.transaction.findMany.mockResolvedValue(mockTransactions);
+
+            const result = await service.findAll(userId, userEmail, userName);
+
+            expect(mockPrismaService.user.findUnique).toHaveBeenCalledWith({ where: { id: userId } });
+            expect(mockPrismaService.transaction.findMany).toHaveBeenCalledWith({
+                where: { familyId: 'fam-123' },
+                orderBy: { date: 'desc' },
+                skip: undefined,
+                take: undefined,
+                include: {
+                    category: true,
+                    wallet: true,
+                    paidBy: true,
+                },
+            });
+            expect(result).toEqual(mockTransactions);
+        });
+
+        it('should paginate transactions when page and limit are provided', async () => {
+            const userId = 'user-123';
+            const userEmail = 'user@test.com';
+            const userName = 'User One';
+            const mockUser = { id: userId, email: userEmail, name: userName, familyId: 'fam-123' };
+
+            mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+            mockPrismaService.transaction.findMany.mockResolvedValue([]);
+
+            await service.findAll(userId, userEmail, userName, 2, 10);
+
+            expect(mockPrismaService.transaction.findMany).toHaveBeenCalledWith({
+                where: { familyId: 'fam-123' },
+                orderBy: { date: 'desc' },
+                skip: 10,
+                take: 10,
+                include: {
+                    category: true,
+                    wallet: true,
+                    paidBy: true,
+                },
+            });
+        });
+
+        it('should create user and default family group if user does not exist in transactions db', async () => {
+            const userId = 'user-new';
+            const userEmail = 'new@test.com';
+            const userName = 'New User';
+            const mockFamily = { id: 'fam-new', name: 'New User & Família' };
+            const mockUser = { id: userId, email: userEmail, name: userName, familyId: 'fam-new' };
+
+            mockPrismaService.user.findUnique.mockResolvedValue(null);
+            mockPrismaService.familyGroup.create.mockResolvedValue(mockFamily);
+            mockPrismaService.user.create.mockResolvedValue(mockUser);
+            mockPrismaService.transaction.findMany.mockResolvedValue([]);
+
+            await service.findAll(userId, userEmail, userName);
+
+            expect(mockPrismaService.user.findUnique).toHaveBeenCalledWith({ where: { id: userId } });
+            expect(mockPrismaService.familyGroup.create).toHaveBeenCalledWith({
+                data: { name: 'New User & Família' },
+            });
+            expect(mockPrismaService.user.create).toHaveBeenCalledWith({
+                data: {
+                    id: userId,
+                    email: userEmail,
+                    name: 'New User',
+                    familyId: 'fam-new',
+                },
+            });
+        });
+
+        it('should filter transactions by date range when startDate and/or endDate are provided', async () => {
+            const userId = 'user-123';
+            const userEmail = 'user@test.com';
+            const userName = 'User One';
+            const mockUser = { id: userId, email: userEmail, name: userName, familyId: 'fam-123' };
+
+            mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+            mockPrismaService.transaction.findMany.mockResolvedValue([]);
+
+            await service.findAll(userId, userEmail, userName, undefined, undefined, '2026-07-01', '2026-07-31');
+
+            expect(mockPrismaService.transaction.findMany).toHaveBeenCalledWith({
+                where: {
+                    familyId: 'fam-123',
+                    date: {
+                        gte: new Date('2026-07-01'),
+                        lte: new Date('2026-07-31'),
+                    },
+                },
+                orderBy: { date: 'desc' },
+                skip: undefined,
+                take: undefined,
+                include: {
+                    category: true,
+                    wallet: true,
+                    paidBy: true,
+                },
+            });
+        });
+    });
+
+    describe('getSummary', () => {
+        it('should return aggregated income, expenses and balance correctly', async () => {
+            const userId = 'user-123';
+            const userEmail = 'user@test.com';
+            const userName = 'User One';
+            const mockUser = { id: userId, email: userEmail, name: userName, familyId: 'fam-123' };
+            const mockTransactions = [
+                { amount: 5000, type: 'INCOME' },
+                { amount: -1500, type: 'EXPENSE' },
+                { amount: -250, type: 'EXPENSE' },
+            ];
+
+            mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+            mockPrismaService.transaction.findMany.mockResolvedValue(mockTransactions);
+
+            const result = await service.getSummary(userId, userEmail, userName, '2026-07-01', '2026-07-31');
+
+            expect(mockPrismaService.transaction.findMany).toHaveBeenCalledWith({
+                where: {
+                    familyId: 'fam-123',
+                    date: {
+                        gte: new Date('2026-07-01'),
+                        lte: new Date('2026-07-31'),
+                    },
+                },
+                select: {
+                    amount: true,
+                    type: true,
+                },
+            });
+            expect(result).toEqual({
+                income: 5000,
+                expenses: 1750,
+                balance: 3250,
+            });
+        });
+    });
+
+    describe('create', () => {
+        it('should create transaction with user-specific IDs and dynamically resolved wallet/category', async () => {
+            const userId = 'user-123';
+            const userEmail = 'user@test.com';
+            const userName = 'User One';
+            const mockUser = { id: userId, email: userEmail, name: userName, familyId: 'fam-123' };
+            const mockCategory = { id: 'cat-123', type: TransactionType.EXPENSE };
+            const mockWallet = { id: 'wal-123', familyId: 'fam-123' };
+            const createDto = {
+                description: 'Supermarket',
+                amount: 150,
+                type: TransactionType.EXPENSE,
+                date: '2026-07-15',
+                paymentMethod: 'CREDIT' as PaymentMethod,
+            };
+
+            mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+            mockPrismaService.category.findFirst.mockResolvedValue(mockCategory);
+            mockPrismaService.wallet.findFirst.mockResolvedValue(mockWallet);
+            mockPrismaService.transaction.create.mockResolvedValue({ id: 'tx-123', ...createDto });
+
+            const result = await service.create(createDto, userId, userEmail, userName);
+
+            expect(mockPrismaService.transaction.create).toHaveBeenCalledWith({
+                data: {
+                    description: 'Supermarket',
+                    amount: 150,
+                    type: TransactionType.EXPENSE,
+                    date: new Date('2026-07-15'),
+                    familyId: 'fam-123',
+                    paidById: userId,
+                    walletId: 'wal-123',
+                    categoryId: 'cat-123',
+                    paymentMethod: 'CREDIT',
+                },
+                include: {
+                    category: true,
+                    family: true,
+                    paidBy: true,
+                    wallet: true,
+                },
+            });
+            expect(result).toBeDefined();
+        });
+
+        it('should create multiple installment transactions when paymentMethod is CREDIT and installments > 1', async () => {
+            const userId = 'user-123';
+            const userEmail = 'user@test.com';
+            const userName = 'User One';
+            const mockUser = { id: userId, email: userEmail, name: userName, familyId: 'fam-123' };
+            const mockCategory = { id: 'cat-123', type: TransactionType.EXPENSE };
+            const mockWallet = { id: 'wal-123', familyId: 'fam-123' };
+            const createDto = {
+                description: 'Notebook',
+                amount: 300,
+                type: TransactionType.EXPENSE,
+                date: '2026-07-15',
+                paymentMethod: 'CREDIT' as PaymentMethod,
+                installments: 3,
+            };
+
+            mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+            mockPrismaService.category.findFirst.mockResolvedValue(mockCategory);
+            mockPrismaService.wallet.findFirst.mockResolvedValue(mockWallet);
+            mockPrismaService.transaction.create.mockImplementation((args) => Promise.resolve({ id: 'tx-installment', ...args.data }));
+
+            const result = await service.create(createDto, userId, userEmail, userName);
+
+            expect(mockPrismaService.transaction.create).toHaveBeenCalledTimes(3);
+            expect(result).toBeDefined();
+            expect(result.description).toContain('(1/3)');
+            expect(result.amount).toEqual(100);
+        });
+    });
+
+    describe('update', () => {
+        it('should update a transaction and format date if provided', async () => {
+            const updateDto = {
+                description: 'Updated Description',
+                date: '2026-07-16',
+            };
+            mockPrismaService.transaction.update = jest.fn().mockResolvedValue({ id: 'tx-123', ...updateDto });
+
+            const result = await service.update('tx-123', updateDto);
+
+            expect(mockPrismaService.transaction.update).toHaveBeenCalledWith({
+                where: { id: 'tx-123' },
+                data: {
+                    description: 'Updated Description',
+                    date: new Date('2026-07-16'),
+                },
+                include: {
+                    category: true,
+                    family: true,
+                    paidBy: true,
+                    wallet: true,
+                },
+            });
+            expect(result).toBeDefined();
+        });
+    });
+
+    describe('remove', () => {
+        it('should delete the transaction if no user credentials are provided (local development fallback)', async () => {
+            const mockTx = { id: 'tx-123', paidById: 'user-123' };
+            mockPrismaService.transaction.findUnique.mockResolvedValue(mockTx);
+            mockPrismaService.transaction.delete.mockResolvedValue(mockTx);
+
+            const result = await service.remove('tx-123');
+
+            expect(mockPrismaService.transaction.findUnique).toHaveBeenCalledWith({ where: { id: 'tx-123' } });
+            expect(mockPrismaService.transaction.delete).toHaveBeenCalledWith({ where: { id: 'tx-123' } });
+            expect(result).toEqual(mockTx);
+        });
+
+        it('should throw NotFoundException if transaction does not exist', async () => {
+            mockPrismaService.transaction.findUnique.mockResolvedValue(null);
+
+            await expect(service.remove('tx-nonexistent')).rejects.toThrow('Transação não encontrada');
+        });
+
+        it('should delete the transaction if user is the owner', async () => {
+            const userId = 'user-123';
+            const userEmail = 'user@test.com';
+            const userName = 'User One';
+            const mockUser = { id: userId, email: userEmail, name: userName, familyId: 'fam-123' };
+            const mockTx = { id: 'tx-123', paidById: userId };
+
+            mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+            mockPrismaService.transaction.findUnique.mockResolvedValue(mockTx);
+            mockPrismaService.transaction.delete.mockResolvedValue(mockTx);
+
+            const result = await service.remove('tx-123', userId, userEmail, userName);
+
+            expect(result).toEqual(mockTx);
+            expect(mockPrismaService.transaction.delete).toHaveBeenCalledWith({ where: { id: 'tx-123' } });
+        });
+
+        it('should throw ForbiddenException if user is NOT the owner', async () => {
+            const userId = 'user-123';
+            const userEmail = 'user@test.com';
+            const userName = 'User One';
+            const mockUser = { id: userId, email: userEmail, name: userName, familyId: 'fam-123' };
+            const mockTx = { id: 'tx-123', paidById: 'user-other' };
+
+            mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+            mockPrismaService.transaction.findUnique.mockResolvedValue(mockTx);
+
+            await expect(service.remove('tx-123', userId, userEmail, userName)).rejects.toThrow(
+                'Você não tem permissão para excluir esta transação.',
+            );
+        });
+    });
+
+    describe('parseSafeDate', () => {
+        it('should correctly parse standard ISO date strings', () => {
+            const date = parseSafeDate('2026-07-27');
+            expect(date).toBeInstanceOf(Date);
+            expect(date?.getUTCFullYear()).toBe(2026);
+            expect(date?.getUTCMonth()).toBe(6); // July is 6 (0-indexed)
+            expect(date?.getUTCDate()).toBe(27);
+        });
+
+        it('should correctly parse Brazilian slash formatted dates (DD/MM/YYYY)', () => {
+            const date = parseSafeDate('27/07/2026');
+            expect(date).toBeInstanceOf(Date);
+            expect(date?.getUTCFullYear()).toBe(2026);
+            expect(date?.getUTCMonth()).toBe(6);
+            expect(date?.getUTCDate()).toBe(27);
+        });
+
+        it('should correctly parse Brazilian dash formatted dates (DD-MM-YYYY)', () => {
+            const date = parseSafeDate('27-07-2026');
+            expect(date).toBeInstanceOf(Date);
+            expect(date?.getUTCFullYear()).toBe(2026);
+            expect(date?.getUTCMonth()).toBe(6);
+            expect(date?.getUTCDate()).toBe(27);
+        });
+
+        it('should correctly parse Brazilian dates with single-digit day and month', () => {
+            const dateSlash = parseSafeDate('5/7/2026');
+            expect(dateSlash?.getUTCFullYear()).toBe(2026);
+            expect(dateSlash?.getUTCMonth()).toBe(6);
+            expect(dateSlash?.getUTCDate()).toBe(5);
+
+            const dateDash = parseSafeDate('5-7-2026');
+            expect(dateDash?.getUTCFullYear()).toBe(2026);
+            expect(dateDash?.getUTCMonth()).toBe(6);
+            expect(dateDash?.getUTCDate()).toBe(5);
+        });
+
+        it('should correctly fall back to US formatting if month is first (MM/DD/YYYY)', () => {
+            const date = parseSafeDate('07/27/2026');
+            expect(date).toBeInstanceOf(Date);
+            expect(date?.getUTCFullYear()).toBe(2026);
+            expect(date?.getUTCMonth()).toBe(6);
+            expect(date?.getUTCDate()).toBe(27);
+        });
+
+        it('should return null for invalid date strings', () => {
+            expect(parseSafeDate('invalid')).toBeNull();
+            expect(parseSafeDate('32/07/2026')).toBeNull(); // Day 32 is invalid
+            expect(parseSafeDate('27/13/2026')).toBeNull(); // Month 13 is invalid
+        });
+
+        it('should return null for special strings like undefined or null', () => {
+            expect(parseSafeDate('undefined')).toBeNull();
+            expect(parseSafeDate('null')).toBeNull();
+            expect(parseSafeDate('')).toBeNull();
+            expect(parseSafeDate(null)).toBeNull();
+            expect(parseSafeDate(undefined)).toBeNull();
+        });
+    });
+
+    describe('Category CRUD Operations', () => {
+        const userId = 'user-123';
+        const userEmail = 'user@test.com';
+        const userName = 'User One';
+        const mockUser = { id: userId, email: userEmail, name: userName, familyId: 'fam-123' };
+
+        describe('findAllCategories', () => {
+            it('should return all categories including system-default and family-specific ones', async () => {
+                mockPrismaService.user.findUnique.mockResolvedValueOnce(mockUser);
+                mockPrismaService.category.findMany.mockResolvedValueOnce([
+                    { id: 'cat-sys', familyId: null, name: 'Default' },
+                    { id: 'cat-fam', familyId: 'fam-123', name: 'Custom' },
+                ]);
+
+                const result = await service.findAllCategories(userId, userEmail, userName);
+                expect(result).toHaveLength(2);
+                expect(mockPrismaService.category.findMany).toHaveBeenCalled();
+            });
+        });
+
+        describe('createCategory', () => {
+            it('should create custom category for user family group', async () => {
+                const categoryDto = { name: 'New Category', type: 'EXPENSE' as const, icon: 'icon', color: '#fff' };
+                mockPrismaService.user.findUnique.mockResolvedValueOnce(mockUser);
+                mockPrismaService.category.create.mockResolvedValueOnce({ id: 'cat-new', ...categoryDto, familyId: 'fam-123' });
+
+                const result = await service.createCategory(categoryDto, userId, userEmail, userName);
+                expect(result).toBeDefined();
+                expect(result.id).toEqual('cat-new');
+            });
+        });
+
+        describe('updateCategory', () => {
+            it('should throw ForbiddenException when attempting to update system-default category', async () => {
+                mockPrismaService.user.findUnique.mockResolvedValueOnce(mockUser);
+                mockPrismaService.category.findUnique.mockResolvedValueOnce({ id: 'cat-sys', familyId: null });
+
+                await expect(
+                    service.updateCategory('cat-sys', { name: 'Name' }, userId, userEmail, userName),
+                ).rejects.toThrow();
+            });
+
+            it('should update user-created custom category successfully', async () => {
+                mockPrismaService.user.findUnique.mockResolvedValueOnce(mockUser);
+                mockPrismaService.category.findUnique.mockResolvedValueOnce({ id: 'cat-fam', familyId: 'fam-123' });
+                mockPrismaService.category.update.mockResolvedValueOnce({ id: 'cat-fam', name: 'Updated name' });
+
+                const result = await service.updateCategory('cat-fam', { name: 'Updated name' }, userId, userEmail, userName);
+                expect(result.name).toEqual('Updated name');
+            });
+        });
+
+        describe('deleteCategory', () => {
+            it('should throw BadRequestException if category has associated transactions', async () => {
+                mockPrismaService.user.findUnique.mockResolvedValueOnce(mockUser);
+                mockPrismaService.category.findUnique.mockResolvedValueOnce({ id: 'cat-fam', familyId: 'fam-123' });
+                mockPrismaService.transaction.count.mockResolvedValueOnce(5); // 5 associated transactions
+
+                await expect(
+                    service.deleteCategory('cat-fam', userId, userEmail, userName),
+                ).rejects.toThrow();
+            });
+
+            it('should delete custom category successfully if no transactions are associated', async () => {
+                mockPrismaService.user.findUnique.mockResolvedValueOnce(mockUser);
+                mockPrismaService.category.findUnique.mockResolvedValueOnce({ id: 'cat-fam', familyId: 'fam-123' });
+                mockPrismaService.transaction.count.mockResolvedValueOnce(0); // 0 associated transactions
+                mockPrismaService.category.delete.mockResolvedValueOnce({ id: 'cat-fam' });
+
+                const result = await service.deleteCategory('cat-fam', userId, userEmail, userName);
+                expect(result.id).toEqual('cat-fam');
+            });
+        });
+    });
+});

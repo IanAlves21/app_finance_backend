@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Relatório Financeiro</title>
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <style>
+        body { 
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; 
+            color: #333333; 
+            margin: 0; 
+            padding: 30px; 
+            background-color: #ffffff;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
+        
+        .header { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            border-bottom: 3px solid #0f172a; 
+            padding-bottom: 20px; 
+            margin-bottom: 30px; 
+        }
+        .header-logo h1 { 
+            margin: 0; 
+            color: #0f172a; 
+            font-size: 28px; 
+            letter-spacing: -1px;
+            font-weight: bold;
+        }
+        .header-logo p { 
+            margin: 5px 0 0 0; 
+            color: #64748b; 
+            font-size: 14px; 
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: bold;
+        }
+        .header-info { 
+            text-align: right; 
+            color: #475569; 
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        /* Cards de Resumo */
+        .summary { 
+            display: flex; 
+            justify-content: space-between; 
+            margin-bottom: 40px; 
+            gap: 20px;
+        }
+        .summary-card { 
+            background: #f8fafc; 
+            padding: 20px; 
+            border-radius: 8px; 
+            flex: 1; 
+            text-align: center; 
+            border: 1px solid #e2e8f0; 
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.03);
+        }
+        .summary-card h3 { 
+            margin: 0 0 10px 0; 
+            font-size: 12px; 
+            color: #64748b; 
+            text-transform: uppercase; 
+            letter-spacing: 1px;
+            font-weight: bold;
+        }
+        .summary-card .value { 
+            font-size: 24px; 
+            font-weight: bold; 
+        }
+        .income { color: #10b981; }  /* Verde */
+        .expense { color: #ef4444; } /* Vermelho */
+        .balance { color: #0f172a; } /* Azul Escuro */
+
+        /* Tabelas */
+        table { 
+            width: 100%; 
+            border-collapse: collapse; 
+            margin-bottom: 30px;
+        }
+        th, td { 
+            padding: 12px 15px; 
+            border-bottom: 1px solid #e2e8f0; 
+            text-align: left;
+            font-size: 14px;
+        }
+        th { 
+            background-color: #f8fafc; 
+            font-weight: 600; 
+            color: #475569; 
+            text-transform: uppercase;
+            font-size: 12px;
+        }
+        th.valor, td.valor { text-align: right; font-weight: 500; }
+        
+        tr.receita td.valor { color: #10b981; font-weight: bold; }
+        tr.despesa td.valor { color: #ef4444; font-weight: bold; }
+
+        .footer { 
+            margin-top: 50px; 
+            text-align: center; 
+            color: #94a3b8; 
+            font-size: 11px; 
+            border-top: 1px solid #e2e8f0; 
+            padding-top: 20px; 
+        }
+    </style>
+</head>
+<body>
+    <div class="a4-container">
+        <!-- Cabeçalho -->
+        <div class="header">
+            <div class="header-logo">
+                <h1>FinanceApp</h1>
+                <p>Extrato de Transações</p>
+            </div>
+            <div class="header-info">
+                <strong>Titular:</strong> {{userName}}<br>
+                <strong>Período:</strong> {{startDate}} a {{endDate}}<br>
+                <strong>Emissão:</strong> {{emissaoDate}} às {{emissaoTime}}
+            </div>
+        </div>
+
+        <!-- Dashboard / Resumo -->
+        <div class="summary">
+            <div class="summary-card">
+                <h3>Total Receitas</h3>
+                <div class="value income">+ {{totalIncome}}</div>
+            </div>
+            <div class="summary-card">
+                <h3>Total Despesas</h3>
+                <div class="value expense">- {{totalExpense}}</div>
+            </div>
+            <div class="summary-card">
+                <h3>Saldo do Período</h3>
+                <div class="value balance">{{netSavings}}</div>
+            </div>
+        </div>
+
+        <!-- Seções Analíticas Adicionais (Categoria e Parceiros) -->
+        <div style="display: flex; justify-content: space-between; margin-bottom: 40px; gap: 20px;">
+            <!-- Divisão por Categoria -->
+            <div style="flex: 1.4;">
+                <h2 style="font-size: 16px; font-weight: bold; color: #0f172a; margin-top: 0; margin-bottom: 15px; text-transform: uppercase; letter-spacing: -0.5px; border-bottom: 2px solid #e2e8f0; padding-bottom: 5px;">Despesas por Categoria</h2>
+                <table style="width: 100%; border-collapse: collapse; margin-bottom: 0;">
+                    <thead>
+                        <tr style="background-color: #f8fafc;">
+                            <th>Categoria</th>
+                            <th style="text-align: right;">Gasto</th>
+                            <th style="text-align: right;">Meta / %</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{categoriesRows}}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Divisão por Parceiro -->
+            <div style="flex: 1;">
+                <h2 style="font-size: 16px; font-weight: bold; color: #0f172a; margin-top: 0; margin-bottom: 15px; text-transform: uppercase; letter-spacing: -0.5px; border-bottom: 2px solid #e2e8f0; padding-bottom: 5px;">Divisão entre Parceiros</h2>
+                <table style="width: 100%; border-collapse: collapse; margin-bottom: 0;">
+                    <thead>
+                        <tr style="background-color: #f8fafc;">
+                            <th>Parceiro</th>
+                            <th style="text-align: right;">Total</th>
+                            <th style="text-align: right;">Divisão</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{usersRows}}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Lista de Lançamentos -->
+        <h2 style="font-size: 16px; font-weight: bold; color: #0f172a; margin-top: 0; margin-bottom: 15px; text-transform: uppercase; letter-spacing: -0.5px; border-bottom: 2px solid #e2e8f0; padding-bottom: 5px;">Lista de Lançamentos</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Data</th>
+                    <th>Descrição</th>
+                    <th>Categoria</th>
+                    <th>Pago por</th>
+                    <th class="valor">Valor (R$)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{transactionsRows}}
+            </tbody>
+        </table>
+
+        <!-- Rodapé Legal -->
+        <div class="footer">
+            Este é um documento gerado automaticamente pelo aplicativo FinanceApp.<br>
+            Ele tem caráter informativo e não possui valor fiscal.<br>
+            ID do Relatório: #FA-{{reportId}}
+        </div>
+    </div>
+</body>
+</html>

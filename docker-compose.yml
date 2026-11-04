@@ -1,0 +1,151 @@
+services:
+    # ------------------------------------------------------------
+    # BANCO DE DADOS POSTGRESQL (Multi-Database)
+    # ------------------------------------------------------------
+    service-transactions:
+        image: postgres:15-alpine
+        container_name: service_transactions_db
+        restart: always
+        environment:
+            POSTGRES_USER: ${DB_USER:-root}
+            POSTGRES_PASSWORD: ${DB_PASSWORD:-root}
+            POSTGRES_DB: service_transactions_db
+        ports:
+            - "${DB_PORT:-5432}:5432"
+        volumes:
+            - service_transactions_pgdata:/var/lib/postgresql/data
+            - ./init-scripts:/docker-entrypoint-initdb.d:ro
+        healthcheck:
+            test:
+                [
+                    "CMD-SHELL",
+                    "pg_isready -U ${DB_USER:-root} -d service_transactions_db",
+                ]
+            interval: 5s
+            timeout: 5s
+            retries: 5
+
+    # ------------------------------------------------------------
+    # PGADMIN (Interface de visualização do Postgres)
+    # ------------------------------------------------------------
+    pgadmin:
+        image: dpage/pgadmin4
+        container_name: pgadmin_tools
+        restart: always
+        environment:
+            PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@admin.com}
+            PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+        ports:
+            - "${PGADMIN_PORT:-5050}:80"
+        depends_on:
+            service-transactions:
+                condition: service_healthy
+
+    # ------------------------------------------------------------
+    # MENSAGERIA RABBITMQ
+    # ------------------------------------------------------------
+    rabbitmq:
+        image: rabbitmq:3-management-alpine
+        container_name: finance_rabbitmq
+        restart: always
+        ports:
+            - "${RABBITMQ_PORT:-5672}:5672"
+            - "${RABBITMQ_MGMT_PORT:-15672}:15672"
+        healthcheck:
+            test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+
+    # # ------------------------------------------------------------
+    # # MICROSSERVIÇO: IDENTITY (Autenticação e Usuários)
+    # # ------------------------------------------------------------
+    # service-identity:
+    #     build:
+    #         context: ./service-identity
+    #         dockerfile: Dockerfile
+    #     container_name: finance_service_identity
+    #     restart: always
+    #     environment:
+    #         PORT: 3001
+    #         DATABASE_URL: ${IDENTITY_DATABASE_URL:-postgresql://${DB_USER:-root}:${DB_PASSWORD:-root}@service-transactions:5432/service_identity_db?schema=public}
+    #         JWT_SECRET: ${JWT_SECRET:-uma_frase_muito_longa_e_dificil_de_adivinhar_123!@}
+    #         JWT_EXPIRATION: ${JWT_EXPIRATION:-15d}
+    #     ports:
+    #         - "${IDENTITY_PORT:-3001}:3001"
+    #     depends_on:
+    #         service-transactions:
+    #             condition: service_healthy
+
+    # # ------------------------------------------------------------
+    # # MICROSSERVIÇO: TRANSACTION (Transações, Carteiras, Grupos)
+    # # ------------------------------------------------------------
+    # service-transaction:
+    #     build:
+    #         context: ./service-transaction
+    #         dockerfile: Dockerfile
+    #     container_name: finance_service_transaction
+    #     restart: always
+    #     environment:
+    #         PORT: 3000
+    #         DATABASE_URL: ${TRANSACTION_DATABASE_URL:-postgresql://${DB_USER:-root}:${DB_PASSWORD:-root}@service-transactions:5432/service_transactions_db?schema=public}
+    #         RABBITMQ_URL: ${RABBITMQ_URL:-amqp://rabbitmq:5672}
+    #         API_GATEWAY_SECRET: ${API_GATEWAY_SECRET:-secrect_super_forte_do_gateway_123!@}
+    #         GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    #         GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+    #     ports:
+    #         - "${TRANSACTION_PORT:-3000}:3000"
+    #     depends_on:
+    #         service-transactions:
+    #             condition: service_healthy
+    #         rabbitmq:
+    #             condition: service_healthy
+
+    # # ------------------------------------------------------------
+    # # MICROSSERVIÇO: ANALYTICS (Relatórios, Métricas e PDF)
+    # # ------------------------------------------------------------
+    # service-analytics:
+    #     build:
+    #         context: ./service-analytics
+    #         dockerfile: Dockerfile
+    #     container_name: finance_service_analytics
+    #     restart: always
+    #     environment:
+    #         PORT: 3003
+    #         DATABASE_URL: ${ANALYTICS_DATABASE_URL:-postgresql://${DB_USER:-root}:${DB_PASSWORD:-root}@service-transactions:5432/service_analytics_db?schema=public}
+    #         RABBITMQ_URL: ${RABBITMQ_URL:-amqp://rabbitmq:5672}
+    #         API_GATEWAY_SECRET: ${API_GATEWAY_SECRET:-secrect_super_forte_do_gateway_123!@}
+    #         PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
+    #     ports:
+    #         - "${ANALYTICS_PORT:-3003}:3003"
+    #     depends_on:
+    #         service-transactions:
+    #             condition: service_healthy
+    #         rabbitmq:
+    #             condition: service_healthy
+
+    # # ------------------------------------------------------------
+    # # API GATEWAY (Ponto Único de Entrada do App Mobile)
+    # # ------------------------------------------------------------
+    # service-gateway:
+    #     build:
+    #         context: ./service-gateway
+    #         dockerfile: Dockerfile
+    #     container_name: finance_service_gateway
+    #     restart: always
+    #     environment:
+    #         PORT: 8080
+    #         JWT_SECRET: ${JWT_SECRET:-uma_frase_muito_longa_e_dificil_de_adivinhar_123!@}
+    #         API_GATEWAY_SECRET: ${API_GATEWAY_SECRET:-secrect_super_forte_do_gateway_123!@}
+    #         IDENTITY_SERVICE_URL: ${IDENTITY_SERVICE_URL:-http://service-identity:3001}
+    #         TRANSACTION_SERVICE_URL: ${TRANSACTION_SERVICE_URL:-http://service-transaction:3000}
+    #         ANALYTICS_SERVICE_URL: ${ANALYTICS_SERVICE_URL:-http://service-analytics:3003}
+    #     ports:
+    #         - "${GATEWAY_PORT:-8080}:8080"
+    #     depends_on:
+    #         - service-identity
+    #         - service-transaction
+    #         - service-analytics
+
+volumes:
+    service_transactions_pgdata:
