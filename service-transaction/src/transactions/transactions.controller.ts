@@ -82,9 +82,13 @@ export class TransactionsController {
     }
 
     @Delete('categories/:id')
-    deleteCategory(@Param('id') id: string, @Headers() headers: Record<string, string>) {
+    deleteCategory(
+        @Param('id') id: string,
+        @Headers() headers: Record<string, string>,
+        @Query('force') force?: string,
+    ) {
         const { userId, userEmail, userName } = this.validateAuthHeaders(headers);
-        return this.transactionsService.deleteCategory(id, userId, userEmail, userName);
+        return this.transactionsService.deleteCategory(id, userId, userEmail, userName, force === 'true');
     }
 
     @Get(':id')

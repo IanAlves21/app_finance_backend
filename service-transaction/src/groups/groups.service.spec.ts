@@ -88,6 +88,7 @@ describe('GroupsService', () => {
         mockPrismaService.familyGroup.create = jest.fn();
         mockPrismaService.familyGroup.findUnique = jest.fn();
         mockPrismaService.familyGroup.findFirst = jest.fn();
+        mockPrismaService.familyGroup.delete = jest.fn().mockResolvedValue({});
 
         mockPrismaService.invite.findFirst = jest.fn();
         mockPrismaService.invite.findUnique = jest.fn();
@@ -159,6 +160,37 @@ describe('GroupsService', () => {
                     avatarUrl: undefined,
                 }],
             });
+        });
+
+        it('should handle P2002 race condition on user creation and delete orphan family group', async () => {
+            const mockUser = { id: 'u-race', email: 'race@test.com', name: 'Race User', familyId: 'fam-1' };
+            const mockFamily = {
+                id: 'fam-1',
+                name: 'Family 1',
+                users: [mockUser],
+            };
+
+            // Initial checks return null
+            mockPrismaService.user.findUnique
+                .mockResolvedValueOnce(null) // id check
+                .mockResolvedValueOnce(null) // email check
+                .mockResolvedValueOnce(mockUser); // catch block lookup
+
+            mockPrismaService.familyGroup.create.mockResolvedValueOnce({ id: 'fam-orphan', name: 'Race User & Família' });
+            mockPrismaService.familyGroup.delete.mockResolvedValueOnce({ id: 'fam-orphan' });
+
+            const p2002Error: any = new Error('Unique constraint failed on the fields: (`id`)');
+            p2002Error.code = 'P2002';
+            mockPrismaService.user.create.mockRejectedValueOnce(p2002Error);
+
+            mockPrismaService.familyGroup.findUnique.mockResolvedValueOnce(mockFamily);
+
+            const result = await service.getGroupInfo('u-race', 'race@test.com', 'Race User');
+
+            expect(mockPrismaService.familyGroup.delete).toHaveBeenCalledWith({
+                where: { id: 'fam-orphan' },
+            });
+            expect(result.familyId).toBe('fam-1');
         });
     });
 

@@ -54,13 +54,16 @@ export class AnalyticsService {
             user = await this.prisma.user.findUnique({
                 where: { email: userEmail },
             });
+        }
 
-            if (user) {
-                return user;
-            }
+        if (user) {
+            return user;
+        }
 
+        let family;
+        try {
             // Cria um FamilyGroup exclusivo e isolado para este novo usuário
-            const family = await this.prisma.familyGroup.create({
+            family = await this.prisma.familyGroup.create({
                 data: { name: `${decodedName} & Família` },
             });
 
@@ -72,9 +75,29 @@ export class AnalyticsService {
                     familyId: family.id,
                 },
             });
-        }
 
-        return user;
+            return user;
+        } catch (error: any) {
+            if (error?.code === 'P2002') {
+                if (family?.id && typeof this.prisma.familyGroup.delete === 'function') {
+                    await this.prisma.familyGroup.delete({ where: { id: family.id } }).catch(() => {});
+                }
+
+                let existingUser = await this.prisma.user.findUnique({
+                    where: { id: userId },
+                });
+                if (!existingUser) {
+                    existingUser = await this.prisma.user.findUnique({
+                        where: { email: userEmail },
+                    });
+                }
+
+                if (existingUser) {
+                    return existingUser;
+                }
+            }
+            throw error;
+        }
     }
 
     async getMonthlySpending(
@@ -653,8 +676,56 @@ export class AnalyticsService {
     // EVENT-DRIVEN DATABASE SYNCHRONIZATION (CQRS)
     // -------------------------------------------------------------------------
 
-    async syncBudget(budget: Budget) {
+    private async ensureFamilyGroup(familyId?: string | null, familyName?: string) {
+        if (!familyId) return;
+        return this.prisma.familyGroup.upsert({
+            where: { id: familyId },
+            update: familyName ? { name: familyName } : {},
+            create: {
+                id: familyId,
+                name: familyName || 'Grupo Familiar',
+            },
+        });
+    }
+
+    private async ensureCategory(categoryId?: string | null, familyId?: string | null) {
+        if (!categoryId) return;
+        const existing = await this.prisma.category.findUnique({ where: { id: categoryId } });
+        if (!existing) {
+            if (familyId) {
+                await this.ensureFamilyGroup(familyId);
+            }
+            await this.prisma.category.upsert({
+                where: { id: categoryId },
+                update: {},
+                create: {
+                    id: categoryId,
+                    name: 'Categoria',
+                    type: 'EXPENSE',
+                    icon: 'category',
+                    color: '#1A2D5A',
+                    familyId: familyId || null,
+                },
+            }).catch(() => null);
+        }
+    }
+
+    async syncBudget(budget: Budget & { category?: Category; family?: FamilyGroup }) {
         if (!budget) return;
+
+        // Garante que o FamilyGroup e a Categoria existam antes de upsert no Budget
+        if (budget.family) {
+            await this.syncFamilyGroup(budget.family);
+        } else if (budget.familyId) {
+            await this.ensureFamilyGroup(budget.familyId);
+        }
+
+        if (budget.category) {
+            await this.syncCategory(budget.category);
+        } else if (budget.categoryId) {
+            await this.ensureCategory(budget.categoryId, budget.familyId);
+        }
+
         return this.prisma.budget.upsert({
             where: { id: budget.id },
             update: {
@@ -683,8 +754,16 @@ export class AnalyticsService {
             .catch(() => null);
     }
 
-    async syncCategory(category: Category) {
+    async syncCategory(category: Category & { family?: FamilyGroup }) {
         if (!category) return;
+
+        // Garante que o FamilyGroup exista antes de upsert na Categoria
+        if (category.family) {
+            await this.syncFamilyGroup(category.family);
+        } else if (category.familyId) {
+            await this.ensureFamilyGroup(category.familyId);
+        }
+
         return this.prisma.category.upsert({
             where: { id: category.id },
             update: {
@@ -706,6 +785,24 @@ export class AnalyticsService {
     }
 
     async deleteCategoryLocal(id: string) {
+        // A origem só exclui a categoria após remover suas transações (exclusão em cascata),
+        // então removemos também as transações locais da réplica para manter a consistência
+        if (this.prisma.transaction?.deleteMany) {
+            await this.prisma.transaction
+                .deleteMany({
+                    where: { categoryId: id },
+                })
+                .catch(() => null);
+        }
+
+        if (this.prisma.budget?.deleteMany) {
+            await this.prisma.budget
+                .deleteMany({
+                    where: { categoryId: id },
+                })
+                .catch(() => null);
+        }
+
         return this.prisma.category
             .delete({
                 where: { id },
@@ -722,8 +819,15 @@ export class AnalyticsService {
         });
     }
 
-    async syncUser(user: User) {
+    async syncUser(user: User & { family?: FamilyGroup }) {
         if (!user) return;
+
+        if (user.family) {
+            await this.syncFamilyGroup(user.family);
+        } else if (user.familyId) {
+            await this.ensureFamilyGroup(user.familyId);
+        }
+
         return this.prisma.user.upsert({
             where: { id: user.id },
             update: {
@@ -742,8 +846,15 @@ export class AnalyticsService {
         });
     }
 
-    async syncWallet(wallet: Wallet) {
+    async syncWallet(wallet: Wallet & { family?: FamilyGroup }) {
         if (!wallet) return;
+
+        if (wallet.family) {
+            await this.syncFamilyGroup(wallet.family);
+        } else if (wallet.familyId) {
+            await this.ensureFamilyGroup(wallet.familyId);
+        }
+
         return this.prisma.wallet.upsert({
             where: { id: wallet.id },
             update: {

@@ -1,5 +1,6 @@
 import {
     BadRequestException,
+    ConflictException,
     ForbiddenException,
     Injectable,
     NotFoundException,
@@ -91,13 +92,16 @@ export class TransactionsService {
             user = await this.prisma.user.findUnique({
                 where: { email: userEmail },
             });
+        }
 
-            if (user) {
-                return user;
-            }
+        if (user) {
+            return user;
+        }
 
+        let family;
+        try {
             // 2. Cria um FamilyGroup exclusivo e isolado para este novo usuário
-            const family = await this.prisma.familyGroup.create({
+            family = await this.prisma.familyGroup.create({
                 data: { name: `${decodedName} & Família` },
             });
 
@@ -110,9 +114,29 @@ export class TransactionsService {
                     familyId: family.id,
                 },
             });
-        }
 
-        return user;
+            return user;
+        } catch (error: any) {
+            if (error?.code === 'P2002') {
+                if (family?.id && typeof this.prisma.familyGroup.delete === 'function') {
+                    await this.prisma.familyGroup.delete({ where: { id: family.id } }).catch(() => {});
+                }
+
+                let existingUser = await this.prisma.user.findUnique({
+                    where: { id: userId },
+                });
+                if (!existingUser) {
+                    existingUser = await this.prisma.user.findUnique({
+                        where: { email: userEmail },
+                    });
+                }
+
+                if (existingUser) {
+                    return existingUser;
+                }
+            }
+            throw error;
+        }
     }
 
     async create(createTransactionDto: CreateTransactionDto, userId?: string, userEmail?: string, userName?: string) {
@@ -362,15 +386,132 @@ export class TransactionsService {
             throw new BadRequestException('Método de pagamento é obrigatório para despesas.');
         }
 
-        const dataToUpdate: Prisma.TransactionUpdateInput = { ...updateTransactionDto };
-        if (updateTransactionDto.date) {
-            const parsedDate = parseSafeDate(updateTransactionDto.date);
-            if (parsedDate) {
-                dataToUpdate.date = parsedDate;
-            } else {
-                delete dataToUpdate.date;
+        const existingTx = await this.prisma.transaction.findUnique({
+            where: { id },
+        });
+
+        if (!existingTx) {
+            throw new NotFoundException('Transação não encontrada');
+        }
+
+        const rawDescription = updateTransactionDto.description || existingTx.description;
+        const cleanBaseDescription = rawDescription.replace(/\s*\(\d+\/\d+\)$/, '').trim();
+
+        // 1. Limpa parcelas irmãs antigas se a transação atual já fazia parte de um parcelamento
+        const oldMatch = existingTx.description.match(/\s*\((\d+)\/(\d+)\)$/);
+        if (oldMatch) {
+            const oldBase = existingTx.description.replace(/\s*\(\d+\/\d+\)$/, '').trim();
+            const oldSiblings = await this.prisma.transaction.findMany({
+                where: {
+                    familyId: existingTx.familyId,
+                    id: { not: existingTx.id },
+                    description: {
+                        startsWith: `${oldBase} (`,
+                    },
+                },
+            });
+            const escapedOldBase = oldBase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const siblingRegex = new RegExp(`^${escapedOldBase}\\s*\\(\\d+\\/\\d+\\)$`);
+            for (const sib of oldSiblings) {
+                if (siblingRegex.test(sib.description)) {
+                    await this.prisma.transaction.delete({ where: { id: sib.id } }).catch(() => null);
+                    this.analyticsClient.emit('transaction.deleted', { id: sib.id });
+                }
             }
         }
+
+        const paymentMethod = updateTransactionDto.paymentMethod !== undefined
+            ? updateTransactionDto.paymentMethod
+            : existingTx.paymentMethod;
+
+        const totalAmount = updateTransactionDto.amount !== undefined
+            ? Number(updateTransactionDto.amount)
+            : (typeof existingTx.amount === 'object' && typeof (existingTx.amount as any).toNumber === 'function'
+                ? (existingTx.amount as any).toNumber()
+                : Number(existingTx.amount));
+
+        const baseDate = updateTransactionDto.date
+            ? parseSafeDate(updateTransactionDto.date) || existingTx.date
+            : existingTx.date;
+
+        const installments =
+            paymentMethod === 'CREDIT' &&
+            updateTransactionDto.installments &&
+            updateTransactionDto.installments > 1
+                ? updateTransactionDto.installments
+                : 1;
+
+        if (paymentMethod === 'CREDIT' && installments > 1) {
+            const baseAmount = totalAmount / installments;
+            const installmentAmount = Math.round(baseAmount * 100) / 100;
+
+            const dataToUpdate: Prisma.TransactionUpdateInput = {
+                ...updateTransactionDto,
+                description: `${cleanBaseDescription} (1/${installments})`,
+                amount: installmentAmount,
+                paymentMethod: 'CREDIT',
+                date: baseDate,
+            };
+            delete (dataToUpdate as any).installments;
+
+            const updatedTx = await this.prisma.transaction.update({
+                where: { id },
+                data: dataToUpdate,
+                include: {
+                    category: true,
+                    paidBy: true,
+                    wallet: true,
+                    family: true,
+                },
+            });
+
+            this.analyticsClient.emit('transaction.updated', updatedTx);
+
+            // Cria as parcelas subsequentes (2..installments)
+            for (let i = 2; i <= installments; i++) {
+                let finalAmount = installmentAmount;
+                if (i === installments) {
+                    const totalDivided = installmentAmount * (installments - 1);
+                    finalAmount = Math.round((totalAmount - totalDivided) * 100) / 100;
+                }
+
+                const installmentDate = new Date(baseDate);
+                installmentDate.setMonth(baseDate.getMonth() + (i - 1));
+
+                const nextInstallment = await this.prisma.transaction.create({
+                    data: {
+                        description: `${cleanBaseDescription} (${i}/${installments})`,
+                        amount: finalAmount,
+                        type: updatedTx.type,
+                        date: installmentDate,
+                        familyId: updatedTx.familyId,
+                        paidById: updatedTx.paidById,
+                        walletId: updatedTx.walletId,
+                        categoryId: updatedTx.categoryId,
+                        paymentMethod: 'CREDIT',
+                    },
+                    include: {
+                        category: true,
+                        paidBy: true,
+                        wallet: true,
+                        family: true,
+                    },
+                });
+
+                this.analyticsClient.emit('transaction.created', nextInstallment);
+            }
+
+            return updatedTx;
+        }
+
+        const dataToUpdate: Prisma.TransactionUpdateInput = {
+            ...updateTransactionDto,
+            description: cleanBaseDescription,
+            amount: totalAmount,
+            paymentMethod,
+            date: baseDate,
+        };
+        delete (dataToUpdate as any).installments;
 
         const updatedTx = await this.prisma.transaction.update({
             where: { id },
@@ -406,12 +547,68 @@ export class TransactionsService {
             }
         }
 
+        // Se for uma parcela ("Descrição (i/N)"), exclui o parcelamento inteiro
+        const siblingIds = await this.findInstallmentSiblingIds(transaction);
+
+        if (siblingIds.length > 0) {
+            const allIds = [transaction.id, ...siblingIds];
+            await this.prisma.$transaction([
+                this.prisma.transaction.deleteMany({ where: { id: { in: allIds } } }),
+            ]);
+
+            // Emit asynchronously to RabbitMQ
+            for (const txId of allIds) {
+                this.analyticsClient.emit('transaction.deleted', { id: txId });
+            }
+
+            return { ...transaction, deletedIds: allIds };
+        }
+
         const deletedTx = await this.prisma.transaction.delete({ where: { id } });
 
         // Emit asynchronously to RabbitMQ
         this.analyticsClient.emit('transaction.deleted', { id: deletedTx.id });
 
-        return deletedTx;
+        return { ...deletedTx, deletedIds: [deletedTx.id] };
+    }
+
+    /**
+     * Retorna os IDs das demais parcelas do mesmo parcelamento da transação informada.
+     * Parcelas são identificadas pelo sufixo "(i/N)" na descrição e devem compartilhar
+     * a mesma descrição base, o mesmo total N, família, pagador, categoria e tipo
+     * (evita apagar outra compra parcelada que tenha o mesmo nome).
+     */
+    private async findInstallmentSiblingIds(transaction: {
+        id: string;
+        description?: string | null;
+        familyId?: string | null;
+        paidById?: string | null;
+        categoryId?: string | null;
+        type?: string | null;
+    }): Promise<string[]> {
+        const match = transaction.description?.match(/^(.*?)\s*\((\d+)\/(\d+)\)$/);
+        if (!match) return [];
+
+        const base = match[1].trim();
+        const total = parseInt(match[3], 10);
+        if (!base || total <= 1) return [];
+
+        const candidates = await this.prisma.transaction.findMany({
+            where: {
+                id: { not: transaction.id },
+                familyId: transaction.familyId ?? undefined,
+                paidById: transaction.paidById ?? undefined,
+                categoryId: transaction.categoryId ?? undefined,
+                type: (transaction.type as any) ?? undefined,
+                description: { startsWith: `${base} (` },
+            },
+            select: { id: true, description: true },
+        });
+
+        const escapedBase = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const siblingRegex = new RegExp(`^${escapedBase}\\s*\\(\\d+\\/${total}\\)$`);
+
+        return candidates.filter((c) => siblingRegex.test(c.description)).map((c) => c.id);
     }
 
     async findAllCategories(userId?: string, userEmail?: string, userName?: string) {
@@ -453,6 +650,9 @@ export class TransactionsService {
                 color: data.color || '#1A2D5A',
                 familyId: finalFamilyId,
                 createdById: userId || null,
+            },
+            include: {
+                family: true,
             },
         });
 
@@ -499,6 +699,9 @@ export class TransactionsService {
                 icon: data.icon,
                 color: data.color,
             },
+            include: {
+                family: true,
+            },
         });
 
         // Emit asynchronously to RabbitMQ
@@ -507,7 +710,7 @@ export class TransactionsService {
         return updatedCategory;
     }
 
-    async deleteCategory(id: string, userId?: string, userEmail?: string, userName?: string) {
+    async deleteCategory(id: string, userId?: string, userEmail?: string, userName?: string, force = false) {
         if (!userId || !userEmail) {
             throw new UnauthorizedException('User credentials are required');
         }
@@ -535,17 +738,26 @@ export class TransactionsService {
             where: { categoryId: id },
         });
 
-        if (associatedTransactions > 0) {
-            throw new BadRequestException(
-                'Não é possível excluir esta categoria pois ela já possui transações associadas.',
-            );
+        if (associatedTransactions > 0 && !force) {
+            // 409 com código e contagem para o app oferecer a exclusão em cascata
+            throw new ConflictException({
+                statusCode: 409,
+                error: 'Conflict',
+                code: 'CATEGORY_HAS_TRANSACTIONS',
+                transactionCount: associatedTransactions,
+                message: 'Não é possível excluir esta categoria pois ela já possui transações associadas.',
+            });
         }
 
-        const deletedCategory = await this.prisma.category.delete({
-            where: { id },
-        });
+        // Remove transações (se force) e orçamentos associados, e a categoria, de forma atômica
+        const [, , deletedCategory] = await this.prisma.$transaction([
+            this.prisma.transaction.deleteMany({ where: { categoryId: id } }),
+            this.prisma.budget.deleteMany({ where: { categoryId: id } }),
+            this.prisma.category.delete({ where: { id } }),
+        ]);
 
         // Emit asynchronously to RabbitMQ
+        // O Analytics remove em cascata as transações e orçamentos locais desta categoria
         this.analyticsClient.emit('category.deleted', { id: deletedCategory.id });
 
         return deletedCategory;
