@@ -1,152 +1,157 @@
 import { Client } from 'pg';
 
+/**
+ * Reconciliação do banco do Analytics (réplica) a partir do banco do Transaction (fonte da verdade).
+ *
+ * Uso:
+ *   # Simulação (padrão): só mostra as diferenças, não grava nada
+ *   npx ts-node prisma/sync.ts
+ *
+ *   # Aplica as correções (upsert de tudo + remoção do que não existe mais na origem)
+ *   npx ts-node prisma/sync.ts --apply
+ *
+ * Bancos (padrão: localhost do docker-compose). Para PROD, defina:
+ *   SYNC_SOURCE_DATABASE_URL=postgresql://...service_transactions_db?sslmode=require
+ *   SYNC_DEST_DATABASE_URL=postgresql://...service_analytics_db?sslmode=require
+ */
+
+const SOURCE_URL =
+    process.env.SYNC_SOURCE_DATABASE_URL ||
+    'postgresql://root:root@localhost:5432/service_transactions_db?schema=public';
+const DEST_URL =
+    process.env.SYNC_DEST_DATABASE_URL ||
+    'postgresql://root:root@localhost:5432/service_analytics_db?schema=public';
+const APPLY = process.argv.includes('--apply');
+
+type Row = Record<string, any>;
+
+interface TableSpec {
+    table: string;
+    label: string;
+    columns: string[];
+}
+
+// Ordem de dependência (pais antes dos filhos) para o upsert.
+// A remoção de órfãos acontece na ordem inversa (filhos antes dos pais).
+const TABLES: TableSpec[] = [
+    { table: 'FamilyGroup', label: 'Grupos Familiares', columns: ['id', 'name'] },
+    { table: 'Category', label: 'Categorias', columns: ['id', 'name', 'type', 'icon', 'color', 'familyId'] },
+    { table: 'User', label: 'Usuários', columns: ['id', 'name', 'email', 'avatarUrl', 'familyId'] },
+    { table: 'Wallet', label: 'Carteiras', columns: ['id', 'name', 'balance', 'familyId'] },
+    {
+        table: 'Transaction',
+        label: 'Transações',
+        columns: [
+            'id',
+            'description',
+            'note',
+            'amount',
+            'date',
+            'type',
+            'status',
+            'paymentMethod',
+            'categoryId',
+            'walletId',
+            'paidById',
+            'familyId',
+            'createdAt',
+            'updatedAt',
+        ],
+    },
+    {
+        table: 'Budget',
+        label: 'Orçamentos',
+        columns: ['id', 'amount', 'month', 'year', 'categoryId', 'familyId', 'createdAt', 'updatedAt'],
+    },
+];
+
+const q = (name: string) => `"${name}"`;
+
+function maskUrl(url: string): string {
+    return url.replace(/\/\/([^:/]+):[^@]*@/, '//$1:***@');
+}
+
 async function sync() {
-    console.log('🔄 Iniciando a Sincronização de Bancos via pg.Client...');
+    console.log(`🔄 Reconciliação do Analytics — modo: ${APPLY ? '✍️  APLICAR' : '👀 SIMULAÇÃO (use --apply para gravar)'}`);
+    console.log(`   Origem:  ${maskUrl(SOURCE_URL)}`);
+    console.log(`   Destino: ${maskUrl(DEST_URL)}\n`);
 
-    const sourceClient = new Client({
-        connectionString: 'postgresql://root:root@localhost:5432/service_transactions_db?schema=public'
-    });
-
-    const destClient = new Client({
-        connectionString: 'postgresql://root:root@localhost:5432/service_analytics_db?schema=public'
-    });
+    const sourceClient = new Client({ connectionString: SOURCE_URL });
+    const destClient = new Client({ connectionString: DEST_URL });
 
     await sourceClient.connect();
     await destClient.connect();
 
     try {
-        // 1. Sincroniza FamilyGroup
-        console.log('👥 Sincronizando Grupos Familiares...');
-        const famRes = await sourceClient.query('SELECT * FROM "FamilyGroup"');
-        for (const fam of famRes.rows) {
-            await destClient.query(
-                `INSERT INTO "FamilyGroup" (id, name) 
-                 VALUES ($1, $2) 
-                 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name`,
-                [fam.id, fam.name]
+        // 1. Lê tudo e calcula as diferenças
+        const sourceRows = new Map<string, Row[]>();
+        const orphanIds = new Map<string, string[]>();
+
+        for (const spec of TABLES) {
+            const src = await sourceClient.query(`SELECT * FROM ${q(spec.table)}`);
+            const dst = await destClient.query(`SELECT id FROM ${q(spec.table)}`);
+
+            const srcIds = new Set(src.rows.map((r: Row) => r.id));
+            const dstIds = new Set(dst.rows.map((r: Row) => r.id));
+
+            const missing = src.rows.filter((r: Row) => !dstIds.has(r.id)).length;
+            const orphans = dst.rows.map((r: Row) => r.id as string).filter((id) => !srcIds.has(id));
+
+            sourceRows.set(spec.table, src.rows);
+            orphanIds.set(spec.table, orphans);
+
+            console.log(
+                `${spec.label.padEnd(18)} origem: ${String(src.rows.length).padStart(5)} | destino: ${String(dst.rows.length).padStart(5)} | faltando no analytics: ${String(missing).padStart(4)} | sobrando no analytics: ${String(orphans.length).padStart(4)}`,
             );
         }
-        console.log(`✅ Sincronizados ${famRes.rows.length} Grupos Familiares.`);
 
-        // 2. Sincroniza Category
-        console.log('🏷️ Sincronizando Categorias...');
-        const catRes = await sourceClient.query('SELECT * FROM "Category"');
-        for (const cat of catRes.rows) {
-            await destClient.query(
-                `INSERT INTO "Category" (id, name, type, icon, color, "familyId") 
-                 VALUES ($1, $2, $3, $4, $5, $6) 
-                 ON CONFLICT (id) DO UPDATE SET 
-                    name = EXCLUDED.name, 
-                    type = EXCLUDED.type, 
-                    icon = EXCLUDED.icon, 
-                    color = EXCLUDED.color, 
-                    "familyId" = EXCLUDED."familyId"`,
-                [cat.id, cat.name, cat.type, cat.icon, cat.color, cat.familyId]
-            );
+        if (!APPLY) {
+            console.log('\nℹ️  Nada foi gravado. Rode com --apply para corrigir o destino.');
+            return;
         }
-        console.log(`✅ Sincronizadas ${catRes.rows.length} Categorias.`);
 
-        // 3. Sincroniza User
-        console.log('👤 Sincronizando Usuários...');
-        const userRes = await sourceClient.query('SELECT * FROM "User"');
-        for (const u of userRes.rows) {
-            await destClient.query(
-                `INSERT INTO "User" (id, name, email, "avatarUrl", "familyId") 
-                 VALUES ($1, $2, $3, $4, $5) 
-                 ON CONFLICT (id) DO UPDATE SET 
-                    name = EXCLUDED.name, 
-                    email = EXCLUDED.email, 
-                    "avatarUrl" = EXCLUDED."avatarUrl", 
-                    "familyId" = EXCLUDED."familyId"`,
-                [u.id, u.name, u.email, u.avatarUrl, u.familyId]
-            );
+        // 2. Aplica tudo numa única transação no destino
+        await destClient.query('BEGIN');
+
+        // 2a. Remove órfãos (filhos antes dos pais)
+        for (const spec of [...TABLES].reverse()) {
+            const ids = orphanIds.get(spec.table) || [];
+            if (ids.length > 0) {
+                await destClient.query(`DELETE FROM ${q(spec.table)} WHERE id = ANY($1::text[])`, [ids]);
+            }
         }
-        console.log(`✅ Sincronizados ${userRes.rows.length} Usuários.`);
 
-        // 4. Sincroniza Wallet
-        console.log('💳 Sincronizando Carteiras...');
-        const walletRes = await sourceClient.query('SELECT * FROM "Wallet"');
-        for (const w of walletRes.rows) {
-            await destClient.query(
-                `INSERT INTO "Wallet" (id, name, balance, "familyId") 
-                 VALUES ($1, $2, $3, $4) 
-                 ON CONFLICT (id) DO UPDATE SET 
-                    name = EXCLUDED.name, 
-                    balance = EXCLUDED.balance, 
-                    "familyId" = EXCLUDED."familyId"`,
-                [w.id, w.name, w.balance, w.familyId]
-            );
+        // 2b. Upsert de tudo da origem (pais antes dos filhos)
+        for (const spec of TABLES) {
+            const cols = spec.columns.map(q).join(', ');
+            const params = spec.columns.map((_, i) => `$${i + 1}`).join(', ');
+            const updates = spec.columns
+                .filter((c) => c !== 'id')
+                .map((c) => `${q(c)} = EXCLUDED.${q(c)}`)
+                .join(', ');
+            const sql = `INSERT INTO ${q(spec.table)} (${cols}) VALUES (${params}) ON CONFLICT (id) DO UPDATE SET ${updates}`;
+
+            for (const row of sourceRows.get(spec.table) || []) {
+                await destClient.query(
+                    sql,
+                    spec.columns.map((c) => row[c]),
+                );
+            }
         }
-        console.log(`✅ Sincronizadas ${walletRes.rows.length} Carteiras.`);
 
-        // 5. Sincroniza Transaction
-        console.log('💰 Sincronizando Transações...');
-        const txRes = await sourceClient.query('SELECT * FROM "Transaction"');
-        for (const tx of txRes.rows) {
-            await destClient.query(
-                `INSERT INTO "Transaction" (id, description, note, amount, date, type, status, "paymentMethod", "categoryId", "walletId", "paidById", "familyId", "createdAt", "updatedAt") 
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) 
-                 ON CONFLICT (id) DO UPDATE SET 
-                    description = EXCLUDED.description, 
-                    note = EXCLUDED.note, 
-                    amount = EXCLUDED.amount, 
-                    date = EXCLUDED.date, 
-                    type = EXCLUDED.type, 
-                    status = EXCLUDED.status, 
-                    "paymentMethod" = EXCLUDED."paymentMethod", 
-                    "categoryId" = EXCLUDED."categoryId", 
-                    "walletId" = EXCLUDED."walletId", 
-                    "paidById" = EXCLUDED."paidById", 
-                    "familyId" = EXCLUDED."familyId", 
-                    "createdAt" = EXCLUDED."createdAt", 
-                    "updatedAt" = EXCLUDED."updatedAt"`,
-                [
-                    tx.id,
-                    tx.description,
-                    tx.note,
-                    tx.amount,
-                    tx.date,
-                    tx.type,
-                    tx.status,
-                    tx.paymentMethod,
-                    tx.categoryId,
-                    tx.walletId,
-                    tx.paidById,
-                    tx.familyId,
-                    tx.createdAt,
-                    tx.updatedAt
-                ]
-            );
-        }
-        console.log(`✅ Sincronizadas ${txRes.rows.length} Transações.`);
-
-        // 6. Sincroniza Budget
-        console.log('📊 Sincronizando Limites de Orçamento (Budgets)...');
-        const budgetRes = await sourceClient.query('SELECT * FROM "Budget"');
-        for (const b of budgetRes.rows) {
-            await destClient.query(
-                `INSERT INTO "Budget" (id, amount, month, year, "categoryId", "familyId", "createdAt", "updatedAt") 
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
-                 ON CONFLICT (id) DO UPDATE SET 
-                    amount = EXCLUDED.amount, 
-                    month = EXCLUDED.month, 
-                    year = EXCLUDED.year, 
-                    "categoryId" = EXCLUDED."categoryId", 
-                    "familyId" = EXCLUDED."familyId", 
-                    "createdAt" = EXCLUDED."createdAt", 
-                    "updatedAt" = EXCLUDED."updatedAt"`,
-                [b.id, b.amount, b.month, b.year, b.categoryId, b.familyId, b.createdAt, b.updatedAt]
-            );
-        }
-        console.log(`✅ Sincronizados ${budgetRes.rows.length} Limites de Orçamento.`);
-
-        console.log('🎉 Sincronização Concluída com Sucesso! Ambos os bancos estão perfeitamente sincronizados.');
+        await destClient.query('COMMIT');
+        console.log('\n🎉 Reconciliação concluída! O Analytics agora reflete exatamente o Transaction.');
     } catch (error) {
-        console.error('❌ Erro durante a sincronização:', error);
+        await destClient.query('ROLLBACK').catch(() => null);
+        console.error('❌ Erro durante a reconciliação (nenhuma alteração foi gravada):', error);
+        process.exitCode = 1;
     } finally {
         await sourceClient.end();
         await destClient.end();
     }
 }
 
-sync().catch(console.error);
+sync().catch((err) => {
+    console.error(err);
+    process.exitCode = 1;
+});

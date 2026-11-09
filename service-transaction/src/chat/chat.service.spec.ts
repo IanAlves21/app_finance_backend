@@ -144,6 +144,71 @@ describe('ChatService', () => {
             }
         });
 
+        it('should fall back to the default model when the configured model is discontinued (404)', async () => {
+            const mockUser = { id: 'u-1', name: 'User 1', email: 'test@test.com', familyId: 'fam-1' };
+            mockPrismaService.user.findUnique.mockResolvedValueOnce(mockUser);
+            mockPrismaService.category.findMany.mockResolvedValueOnce([]);
+            mockConfigService.get.mockImplementation((key: string) => {
+                if (key === 'GEMINI_API_KEY') return 'valid-key';
+                if (key === 'GEMINI_MODEL') return 'gemini-2.5-flash';
+                return null;
+            });
+
+            const mockGeminiJson = { isTransaction: false, reply: 'Olá!' };
+            const notFound = {
+                ok: false,
+                status: 404,
+                text: jest.fn().mockResolvedValue('{"error":{"status":"NOT_FOUND"}}'),
+            };
+            const success = {
+                ok: true,
+                json: jest.fn().mockResolvedValue({
+                    candidates: [{ content: { parts: [{ text: JSON.stringify(mockGeminiJson) }] } }],
+                }),
+            };
+
+            const originalFetch = global.fetch;
+            const mockFetch = jest.fn().mockResolvedValueOnce(notFound).mockResolvedValueOnce(success);
+            global.fetch = mockFetch;
+
+            try {
+                const result = await service.processMessage('Oi', 'u-1', 'test@test.com');
+                expect(mockFetch).toHaveBeenCalledTimes(2);
+                expect(mockFetch.mock.calls[0][0]).toContain('models/gemini-2.5-flash:');
+                expect(mockFetch.mock.calls[1][0]).toContain('models/gemini-3.1-flash-lite:');
+                expect(result).toEqual(mockGeminiJson);
+            } finally {
+                global.fetch = originalFetch;
+            }
+        });
+
+        it('should not retry on non-retryable errors (e.g. invalid key 400)', async () => {
+            const mockUser = { id: 'u-1', name: 'User 1', email: 'test@test.com', familyId: 'fam-1' };
+            mockPrismaService.user.findUnique.mockResolvedValueOnce(mockUser);
+            mockPrismaService.category.findMany.mockResolvedValueOnce([]);
+            mockConfigService.get.mockImplementation((key: string) => {
+                if (key === 'GEMINI_API_KEY') return 'bad-key';
+                if (key === 'GEMINI_MODEL') return 'gemini-2.5-flash';
+                return null;
+            });
+
+            const originalFetch = global.fetch;
+            const mockFetch = jest.fn().mockResolvedValue({
+                ok: false,
+                status: 400,
+                text: jest.fn().mockResolvedValue('API key not valid'),
+            });
+            global.fetch = mockFetch;
+
+            try {
+                const result = await service.processMessage('Oi', 'u-1', 'test@test.com');
+                expect(mockFetch).toHaveBeenCalledTimes(1);
+                expect(result.isTransaction).toBe(false);
+            } finally {
+                global.fetch = originalFetch;
+            }
+        });
+
         it('should create new user and family group if user does not exist in DB', async () => {
             mockPrismaService.user.findUnique.mockResolvedValueOnce(null); // by id
             mockPrismaService.user.findUnique.mockResolvedValueOnce(null); // by email

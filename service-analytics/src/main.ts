@@ -22,6 +22,10 @@ async function bootstrap() {
             queueOptions: {
                 durable: true,
             },
+            // Ack manual (RmqAckInterceptor): a mensagem só sai da fila após ser processada com sucesso
+            noAck: false,
+            // Processa um evento por vez, na ordem de publicação (evita corridas entre parcelas/exclusões)
+            prefetchCount: 1,
         },
     });
 

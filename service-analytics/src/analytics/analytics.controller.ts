@@ -1,11 +1,13 @@
-import { Controller, Get, Headers, Query, Res } from '@nestjs/common';
+import { Controller, Get, Headers, Query, Res, UseInterceptors } from '@nestjs/common';
 import { EventPattern, Payload } from '@nestjs/microservices';
 import type { Category, Budget } from '@prisma/client';
 import { AnalyticsService } from './analytics.service';
 import type { RichTransactionEvent } from './analytics.service';
 import * as express from 'express';
+import { RmqAckInterceptor } from '../common/interceptors/rmq-ack.interceptor';
 
 @Controller('analytics')
+@UseInterceptors(RmqAckInterceptor)
 export class AnalyticsController {
     constructor(private readonly analyticsService: AnalyticsService) {}
 

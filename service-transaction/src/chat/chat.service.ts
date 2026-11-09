@@ -63,6 +63,43 @@ export class ChatService {
         }
     }
 
+    /** Modelo usado quando GEMINI_MODEL não está definido ou o configurado está indisponível */
+    static readonly DEFAULT_GEMINI_MODEL = 'gemini-3.1-flash-lite';
+
+    /**
+     * Chama o Gemini com o modelo configurado (GEMINI_MODEL) e, se ele estiver
+     * descontinuado (404) ou sobrecarregado/fora do ar (429/5xx), tenta o modelo padrão.
+     * Evita que o chat pare quando o Google aposenta um modelo.
+     */
+    private async callGeminiWithFallback(apiKey: string, requestInit: RequestInit): Promise<Response> {
+        const configuredModel = this.configService.get<string>('GEMINI_MODEL')?.trim();
+        const models = [...new Set([configuredModel, ChatService.DEFAULT_GEMINI_MODEL].filter(Boolean))] as string[];
+
+        let lastError = '';
+        for (let i = 0; i < models.length; i++) {
+            const model = models[i];
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+            const apiResponse = await fetch(url, requestInit);
+
+            if (apiResponse.ok) {
+                return apiResponse;
+            }
+
+            const errText = await apiResponse.text();
+            lastError = `Erro na API do Gemini (${model}): ${apiResponse.status} - ${errText}`;
+
+            const isRetryable = apiResponse.status === 404 || apiResponse.status === 429 || apiResponse.status >= 500;
+            const hasNext = i < models.length - 1;
+            if (isRetryable && hasNext) {
+                console.warn(`[Chat] Modelo "${model}" indisponível (${apiResponse.status}); tentando "${models[i + 1]}".`);
+                continue;
+            }
+            break;
+        }
+
+        throw new Error(lastError);
+    }
+
     async processMessage(message: string, userId?: string, userEmail?: string, userName?: string, acceptLanguage?: string) {
         if (!userId || !userEmail) {
             throw new UnauthorizedException('Credenciais de usuário obrigatórias');
@@ -125,9 +162,7 @@ Instruções para análise:
 A sua resposta deve seguir rigorosamente o esquema JSON fornecido.`;
 
         try {
-            const modelName = this.configService.get<string>('GEMINI_MODEL') || 'gemini-3.1-flash-lite';
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
-            const apiResponse = await fetch(url, {
+            const requestInit: RequestInit = {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -187,12 +222,9 @@ A sua resposta deve seguir rigorosamente o esquema JSON fornecido.`;
                         },
                     },
                 }),
-            });
+            };
 
-            if (!apiResponse.ok) {
-                const errText = await apiResponse.text();
-                throw new Error(`Erro na API do Gemini: ${apiResponse.status} - ${errText}`);
-            }
+            const apiResponse = await this.callGeminiWithFallback(apiKey, requestInit);
 
             const data = (await apiResponse.json()) as any;
             const textResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;

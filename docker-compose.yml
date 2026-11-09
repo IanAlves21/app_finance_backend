@@ -92,7 +92,7 @@ services:
     #         RABBITMQ_URL: ${RABBITMQ_URL:-amqp://rabbitmq:5672}
     #         API_GATEWAY_SECRET: ${API_GATEWAY_SECRET:-secrect_super_forte_do_gateway_123!@}
     #         GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-    #         GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+    #         GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.1-flash-lite}
     #     ports:
     #         - "${TRANSACTION_PORT:-3000}:3000"
     #     depends_on:

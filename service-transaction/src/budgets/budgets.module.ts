@@ -15,6 +15,8 @@ import { BudgetsController } from './budgets.controller';
                     queueOptions: {
                         durable: true,
                     },
+                    // Mensagens gravadas em disco no broker: não se perdem se o RabbitMQ reiniciar
+                    persistent: true,
                 },
             },
         ]),
