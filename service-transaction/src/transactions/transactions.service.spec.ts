@@ -12,6 +12,7 @@ describe('TransactionsService', () => {
             findUnique: jest.fn(),
             create: jest.fn(),
             delete: jest.fn(),
+            deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
             count: jest.fn(),
         },
         user: {
@@ -21,6 +22,7 @@ describe('TransactionsService', () => {
         familyGroup: {
             findFirst: jest.fn(),
             create: jest.fn(),
+            delete: jest.fn(),
         },
         category: {
             findFirst: jest.fn(),
@@ -36,6 +38,10 @@ describe('TransactionsService', () => {
             findMany: jest.fn(),
             findUnique: jest.fn(),
         },
+        budget: {
+            deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
+        $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
     };
 
     beforeEach(async () => {
@@ -161,6 +167,37 @@ describe('TransactionsService', () => {
                     familyId: 'fam-new',
                 },
             });
+        });
+
+        it('should handle P2002 race condition on user create, delete orphan family, and return existing user', async () => {
+            const userId = 'user-race';
+            const userEmail = 'race@test.com';
+            const userName = 'Race User';
+            const mockFamily = { id: 'fam-orphan', name: 'Race User & Família' };
+            const existingUser = { id: userId, email: userEmail, name: userName, familyId: 'fam-winner' };
+
+            // 1. First findUnique checks return null (user doesn't exist yet)
+            mockPrismaService.user.findUnique
+                .mockResolvedValueOnce(null) // check by id
+                .mockResolvedValueOnce(null) // check by email
+                .mockResolvedValueOnce(existingUser); // catch block lookup
+
+            mockPrismaService.familyGroup.create.mockResolvedValue(mockFamily);
+            mockPrismaService.familyGroup.delete.mockResolvedValue(mockFamily);
+
+            // 2. User create throws P2002 unique constraint error
+            const p2002Error: any = new Error('Unique constraint failed on the fields: (`id`)');
+            p2002Error.code = 'P2002';
+            mockPrismaService.user.create.mockRejectedValue(p2002Error);
+
+            mockPrismaService.transaction.findMany.mockResolvedValue([]);
+
+            const result = await service.findAll(userId, userEmail, userName);
+
+            expect(mockPrismaService.familyGroup.delete).toHaveBeenCalledWith({
+                where: { id: 'fam-orphan' },
+            });
+            expect(result).toEqual([]);
         });
 
         it('should filter transactions by date range when startDate and/or endDate are provided', async () => {
@@ -313,6 +350,15 @@ describe('TransactionsService', () => {
                 description: 'Updated Description',
                 date: '2026-07-16',
             };
+            mockPrismaService.transaction.findUnique.mockResolvedValueOnce({
+                id: 'tx-123',
+                description: 'Old Description',
+                amount: 100,
+                type: 'EXPENSE',
+                paymentMethod: 'CASH',
+                date: new Date('2026-07-15'),
+                familyId: 'fam-1',
+            });
             mockPrismaService.transaction.update = jest.fn().mockResolvedValue({ id: 'tx-123', ...updateDto });
 
             const result = await service.update('tx-123', updateDto);
@@ -321,6 +367,8 @@ describe('TransactionsService', () => {
                 where: { id: 'tx-123' },
                 data: {
                     description: 'Updated Description',
+                    amount: 100,
+                    paymentMethod: 'CASH',
                     date: new Date('2026-07-16'),
                 },
                 include: {
@@ -331,6 +379,54 @@ describe('TransactionsService', () => {
                 },
             });
             expect(result).toBeDefined();
+        });
+
+        it('should update to installments on CREDIT paymentMethod, updating first and creating subsequent installments', async () => {
+            const existingTx = {
+                id: 'tx-1',
+                description: 'Smartphone',
+                amount: 600,
+                type: TransactionType.EXPENSE,
+                paymentMethod: 'DEBIT',
+                date: new Date('2026-07-15'),
+                familyId: 'fam-1',
+                paidById: 'u-1',
+                walletId: 'w-1',
+                categoryId: 'cat-1',
+            };
+
+            const updateDto = {
+                description: 'Smartphone',
+                amount: 600,
+                paymentMethod: 'CREDIT' as PaymentMethod,
+                installments: 3,
+            };
+
+            mockPrismaService.transaction.findUnique.mockResolvedValueOnce(existingTx);
+            mockPrismaService.transaction.update = jest.fn().mockImplementation((args) => Promise.resolve({
+                ...existingTx,
+                ...args.data,
+            }));
+            mockPrismaService.transaction.create = jest.fn().mockImplementation((args) => Promise.resolve({
+                id: 'tx-installment-subsequent',
+                ...args.data,
+            }));
+
+            const result = await service.update('tx-1', updateDto);
+
+            expect(mockPrismaService.transaction.update).toHaveBeenCalledWith(expect.objectContaining({
+                where: { id: 'tx-1' },
+                data: expect.objectContaining({
+                    description: 'Smartphone (1/3)',
+                    amount: 200,
+                    paymentMethod: 'CREDIT',
+                }),
+            }));
+
+            // Deve criar parcelas 2 e 3
+            expect(mockPrismaService.transaction.create).toHaveBeenCalledTimes(2);
+            expect(result.description).toEqual('Smartphone (1/3)');
+            expect(result.amount).toEqual(200);
         });
     });
 
@@ -344,13 +440,49 @@ describe('TransactionsService', () => {
 
             expect(mockPrismaService.transaction.findUnique).toHaveBeenCalledWith({ where: { id: 'tx-123' } });
             expect(mockPrismaService.transaction.delete).toHaveBeenCalledWith({ where: { id: 'tx-123' } });
-            expect(result).toEqual(mockTx);
+            expect(result).toEqual({ ...mockTx, deletedIds: ['tx-123'] });
         });
 
         it('should throw NotFoundException if transaction does not exist', async () => {
             mockPrismaService.transaction.findUnique.mockResolvedValue(null);
 
             await expect(service.remove('tx-nonexistent')).rejects.toThrow('Transação não encontrada');
+        });
+
+        it('should delete all installments of the same purchase when deleting one installment', async () => {
+            const mockTx = {
+                id: 'tx-2',
+                description: 'Notebook (2/3)',
+                paidById: 'user-123',
+                familyId: 'fam-123',
+                categoryId: 'cat-1',
+                type: 'EXPENSE',
+            };
+            mockPrismaService.transaction.findUnique.mockResolvedValue(mockTx);
+            mockPrismaService.transaction.findMany.mockResolvedValueOnce([
+                { id: 'tx-1', description: 'Notebook (1/3)' },
+                { id: 'tx-3', description: 'Notebook (3/3)' },
+                { id: 'tx-other', description: 'Notebook (1/2)' }, // outro parcelamento (total diferente)
+                { id: 'tx-other2', description: 'Notebook (velho) (1/3)' }, // descrição base diferente
+            ]);
+
+            const result: any = await service.remove('tx-2');
+
+            expect(mockPrismaService.transaction.findMany).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    where: expect.objectContaining({
+                        familyId: 'fam-123',
+                        paidById: 'user-123',
+                        categoryId: 'cat-1',
+                        description: { startsWith: 'Notebook (' },
+                    }),
+                }),
+            );
+            expect(mockPrismaService.transaction.deleteMany).toHaveBeenCalledWith({
+                where: { id: { in: ['tx-2', 'tx-1', 'tx-3'] } },
+            });
+            expect(mockPrismaService.transaction.delete).not.toHaveBeenCalled();
+            expect(result.deletedIds).toEqual(['tx-2', 'tx-1', 'tx-3']);
         });
 
         it('should delete the transaction if user is the owner', async () => {
@@ -366,7 +498,7 @@ describe('TransactionsService', () => {
 
             const result = await service.remove('tx-123', userId, userEmail, userName);
 
-            expect(result).toEqual(mockTx);
+            expect(result).toEqual({ ...mockTx, deletedIds: ['tx-123'] });
             expect(mockPrismaService.transaction.delete).toHaveBeenCalledWith({ where: { id: 'tx-123' } });
         });
 
@@ -506,7 +638,31 @@ describe('TransactionsService', () => {
 
                 await expect(
                     service.deleteCategory('cat-fam', userId, userEmail, userName),
-                ).rejects.toThrow();
+                ).rejects.toMatchObject({
+                    status: 409,
+                    response: expect.objectContaining({
+                        code: 'CATEGORY_HAS_TRANSACTIONS',
+                        transactionCount: 5,
+                    }),
+                });
+                expect(mockPrismaService.category.delete).not.toHaveBeenCalled();
+            });
+
+            it('should delete category along with its transactions and budgets when force is true', async () => {
+                mockPrismaService.user.findUnique.mockResolvedValueOnce(mockUser);
+                mockPrismaService.category.findUnique.mockResolvedValueOnce({ id: 'cat-fam', familyId: 'fam-123' });
+                mockPrismaService.transaction.count.mockResolvedValueOnce(5);
+                mockPrismaService.category.delete.mockResolvedValueOnce({ id: 'cat-fam' });
+
+                const result = await service.deleteCategory('cat-fam', userId, userEmail, userName, true);
+                expect(mockPrismaService.transaction.deleteMany).toHaveBeenCalledWith({
+                    where: { categoryId: 'cat-fam' },
+                });
+                expect(mockPrismaService.budget.deleteMany).toHaveBeenCalledWith({
+                    where: { categoryId: 'cat-fam' },
+                });
+                expect(mockPrismaService.$transaction).toHaveBeenCalled();
+                expect(result.id).toEqual('cat-fam');
             });
 
             it('should delete custom category successfully if no transactions are associated', async () => {
@@ -516,6 +672,9 @@ describe('TransactionsService', () => {
                 mockPrismaService.category.delete.mockResolvedValueOnce({ id: 'cat-fam' });
 
                 const result = await service.deleteCategory('cat-fam', userId, userEmail, userName);
+                expect(mockPrismaService.budget.deleteMany).toHaveBeenCalledWith({
+                    where: { categoryId: 'cat-fam' },
+                });
                 expect(result.id).toEqual('cat-fam');
             });
         });

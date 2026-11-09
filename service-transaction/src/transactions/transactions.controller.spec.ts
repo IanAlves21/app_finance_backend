@@ -112,7 +112,10 @@ describe('TransactionsController', () => {
 
         it('deleteCategory should validate headers and delegate to service', async () => {
             await controller.deleteCategory('cat-1', validHeaders);
-            expect(mockTransactionsService.deleteCategory).toHaveBeenCalledWith('cat-1', 'u-1', 'test@test.com', 'User%20One');
+            expect(mockTransactionsService.deleteCategory).toHaveBeenCalledWith('cat-1', 'u-1', 'test@test.com', 'User%20One', false);
+
+            await controller.deleteCategory('cat-1', validHeaders, 'true');
+            expect(mockTransactionsService.deleteCategory).toHaveBeenLastCalledWith('cat-1', 'u-1', 'test@test.com', 'User%20One', true);
         });
     });
 });

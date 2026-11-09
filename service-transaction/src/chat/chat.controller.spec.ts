@@ -43,7 +43,7 @@ describe('ChatController', () => {
             mockChatService.processMessage.mockResolvedValueOnce(mockReply);
 
             const result = await controller.processMessage(body, headers);
-            expect(service.processMessage).toHaveBeenCalledWith('Gastei 50 reais', 'u-1', 'test@test.com', 'User 1');
+            expect(service.processMessage).toHaveBeenCalledWith('Gastei 50 reais', 'u-1', 'test@test.com', 'User 1', undefined);
             expect(result).toEqual(mockReply);
         });
     });

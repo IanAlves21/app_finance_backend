@@ -55,6 +55,7 @@ describe('AnalyticsService', () => {
             findMany: jest.fn(),
             upsert: jest.fn(),
             delete: jest.fn(),
+            deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
             updateMany: jest.fn(),
         },
         wallet: {
@@ -145,6 +146,34 @@ describe('AnalyticsService', () => {
             mockPrismaService.budget.findMany.mockResolvedValue([]);
 
             const result = await service.getMonthlySpending(userId, userEmail, 'Test', 6, 'YEARLY');
+            expect(result).toBeDefined();
+        });
+
+        it('should handle P2002 race condition on user creation, delete orphan family, and return existing user', async () => {
+            const userId = 'user-race';
+            const userEmail = 'race@example.com';
+            const mockFamily = { id: 'fam-orphan', name: 'Test & Família' };
+            const existingUser = { id: userId, email: userEmail, familyId: 'fam-winner', name: 'Test' };
+
+            mockPrismaService.user.findUnique
+                .mockResolvedValueOnce(null)
+                .mockResolvedValueOnce(null)
+                .mockResolvedValueOnce(existingUser);
+
+            mockPrismaService.familyGroup.create.mockResolvedValueOnce(mockFamily);
+
+            const p2002Error: any = new Error('Unique constraint failed on the fields: (`id`)');
+            p2002Error.code = 'P2002';
+            mockPrismaService.user.create.mockRejectedValueOnce(p2002Error);
+
+            mockPrismaService.transaction.findMany.mockResolvedValue([]);
+            mockPrismaService.budget.findMany.mockResolvedValue([]);
+
+            const result = await service.getMonthlySpending(userId, userEmail, 'Test', 6, 'MONTHLY');
+
+            expect(mockPrismaService.familyGroup.delete).toHaveBeenCalledWith({
+                where: { id: 'fam-orphan' },
+            });
             expect(result).toBeDefined();
         });
 
@@ -336,11 +365,47 @@ describe('AnalyticsService', () => {
         });
     });
 
+    describe('syncCategory', () => {
+        it('should upsert category and ensure familyGroup exists if familyId is provided', async () => {
+            const mockCategory = {
+                id: 'cat-1',
+                name: 'Food',
+                type: 'EXPENSE' as const,
+                icon: 'restaurant',
+                color: '#fff',
+                familyId: 'fam-1',
+                createdById: 'u-1',
+            };
+            mockPrismaService.familyGroup.upsert.mockResolvedValue({ id: 'fam-1', name: 'Grupo Familiar' });
+            mockPrismaService.category.upsert.mockResolvedValue(mockCategory);
+
+            await service.syncCategory(mockCategory as any);
+
+            expect(mockPrismaService.familyGroup.upsert).toHaveBeenCalledWith({
+                where: { id: 'fam-1' },
+                update: {},
+                create: { id: 'fam-1', name: 'Grupo Familiar' },
+            });
+            expect(mockPrismaService.category.upsert).toHaveBeenCalled();
+        });
+
+        it('should return undefined if no category provided', async () => {
+            const result = await service.syncCategory(null as any);
+            expect(result).toBeUndefined();
+        });
+    });
+
     describe('deleteCategoryLocal', () => {
-        it('should delete category', async () => {
+        it('should delete category and clean up associated budgets', async () => {
+            mockPrismaService.budget.deleteMany.mockResolvedValue({ count: 1 });
             mockPrismaService.category.delete.mockResolvedValue({ id: 'cat-1' });
             await service.deleteCategoryLocal('cat-1');
-            expect(mockPrismaService.category.delete).toHaveBeenCalled();
+            expect(mockPrismaService.budget.deleteMany).toHaveBeenCalledWith({
+                where: { categoryId: 'cat-1' },
+            });
+            expect(mockPrismaService.category.delete).toHaveBeenCalledWith({
+                where: { id: 'cat-1' },
+            });
         });
     });
 

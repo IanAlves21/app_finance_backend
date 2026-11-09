@@ -20,10 +20,13 @@ export class ChatService {
             user = await this.prisma.user.findUnique({
                 where: { email: userEmail },
             });
+        }
 
-            if (user) return user;
+        if (user) return user;
 
-            const family = await this.prisma.familyGroup.create({
+        let family;
+        try {
+            family = await this.prisma.familyGroup.create({
                 data: { name: `${decodedName} & Família` },
             });
 
@@ -35,9 +38,29 @@ export class ChatService {
                     familyId: family.id,
                 },
             });
-        }
 
-        return user;
+            return user;
+        } catch (error: any) {
+            if (error?.code === 'P2002') {
+                if (family?.id && typeof this.prisma.familyGroup.delete === 'function') {
+                    await this.prisma.familyGroup.delete({ where: { id: family.id } }).catch(() => {});
+                }
+
+                let existingUser = await this.prisma.user.findUnique({
+                    where: { id: userId },
+                });
+                if (!existingUser) {
+                    existingUser = await this.prisma.user.findUnique({
+                        where: { email: userEmail },
+                    });
+                }
+
+                if (existingUser) {
+                    return existingUser;
+                }
+            }
+            throw error;
+        }
     }
 
     async processMessage(message: string, userId?: string, userEmail?: string, userName?: string, acceptLanguage?: string) {
